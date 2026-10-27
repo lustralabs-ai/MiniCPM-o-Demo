@@ -538,7 +538,8 @@ class BridgeSession:
                 break
             detail = (await resp.aread()).decode("utf-8", "replace")
             await resp.aclose()
-            if (resp.status_code == 400 and any(m in detail for m in _CONTEXT_ERROR_MARKERS)
+            # vllm-omni reports this as a 500, plain vllm as a 400.
+            if (resp.status_code in (400, 500) and any(m in detail for m in _CONTEXT_ERROR_MARKERS)
                     and _drop_oldest_exchange(messages)):
                 dropped += 1
                 continue
