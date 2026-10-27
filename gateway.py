@@ -1405,7 +1405,11 @@ async def realtime_ws(ws: WebSocket):
         await ws.close(code=1008, reason=f"Unsupported realtime mode: {mode}")
         return
 
-    max_duration_s = 300 if mode == "video" else 600
+    max_duration_s = GATEWAY_CONFIG.get("duplex_max_duration")
+    if max_duration_s is None:
+        max_duration_s = 300 if mode == "video" else 600
+    elif max_duration_s <= 0:
+        max_duration_s = None
     request_type = "omni_duplex" if mode == "video" else "audio_duplex"
 
     await _api_worker_passthrough_ws(
@@ -1492,6 +1496,8 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
     parser.add_argument("--max-queue-size", type=int, default=None, help="Max queue size")
     parser.add_argument("--timeout", type=float, default=None, help="Request timeout (s)")
+    parser.add_argument("--duplex-max-duration", type=float, default=None,
+                        help="Max duplex session length in seconds (0 = unlimited; default 300 omni / 600 audio)")
     # 协议选择：默认 HTTPS，--http 可降级为 HTTP
     proto_group = parser.add_mutually_exclusive_group()
     proto_group.add_argument("--https", action="store_true", default=True,
@@ -1517,6 +1523,7 @@ def main():
         "workers": [],
         "max_queue_size": args.max_queue_size or cfg.max_queue_size,
         "timeout": args.timeout or cfg.request_timeout,
+        "duplex_max_duration": args.duplex_max_duration,
         "eta_config": {
             "eta_chat_s": cfg.eta_chat_s,
             "eta_half_duplex_s": cfg.eta_half_duplex_s,
