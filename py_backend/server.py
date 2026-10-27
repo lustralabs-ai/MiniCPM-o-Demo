@@ -32,6 +32,12 @@ from py_backend.chat_util import (
     parse_worker_chat_request_message,
 )
 
+from transformers import PretrainedConfig
+
+# Fallback patch for the missing generation attribute
+for attr in ['top_p', 'top_k', 'repetition_penalty']:
+    if not hasattr(PretrainedConfig, attr):
+        setattr(PretrainedConfig, attr, None)
 
 logger = logging.getLogger("backend_server")
 
@@ -631,6 +637,12 @@ async def backend_ws(ws: WebSocket) -> None:
         if session is not None:
             await session.close(reason="client_disconnected", emit_event=False)
     except Exception as exc:
+        if session is not None and session.closed:
+            # Closed via POST /sessions/{id}/close while a chunk was still being processed;
+            # the in-flight send hits the already-closed socket. Not an error.
+            logger.info("session %s closed during in-flight work: %s", session.session_id, exc)
+            return
+        logger.exception("backend session error")
         if session is not None:
             await session.fatal("backend_error", message=str(exc))
         else:

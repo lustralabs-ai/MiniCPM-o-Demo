@@ -32,6 +32,84 @@ from transformers.cache_utils import DynamicCache
 logger = logging.getLogger(__name__)
 
 
+# ============ transformers>=5 DynamicCache compatibility ============
+# transformers 5 replaced DynamicCache.key_cache / value_cache (lists of tensors)
+# with DynamicCache.layers[i].keys / .values. This code reads, slices and assigns
+# key_cache / value_cache directly, so expose list-like views over the layers.
+
+
+class _LayerTensorView:
+    """List-like view of one tensor attribute ("keys" or "values") across cache layers."""
+
+    def __init__(self, cache, attr: str):
+        self._cache = cache
+        self._attr = attr
+
+    def __len__(self):
+        return len(self._cache.layers)
+
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            return [self[i] for i in range(*idx.indices(len(self)))]
+        tensor = getattr(self._cache.layers[idx], self._attr)
+        return tensor if tensor is not None else torch.tensor([])
+
+    def __setitem__(self, idx, tensor):
+        layer = self._cache.layers[idx]
+        setattr(layer, self._attr, tensor)
+        if not layer.is_initialized:
+            layer.dtype, layer.device = tensor.dtype, tensor.device
+            layer.is_initialized = True
+
+    def __iter__(self):
+        return (self[i] for i in range(len(self)))
+
+
+def _make_layer_tensor_property(attr: str):
+    def getter(self):
+        return _LayerTensorView(self, attr)
+
+    def setter(self, tensors):
+        tensors = list(tensors)
+        while len(self.layers) < len(tensors):
+            self.layers.append(DynamicLayer())
+        view = _LayerTensorView(self, attr)
+        for i, tensor in enumerate(tensors):
+            view[i] = tensor
+
+    return property(getter, setter)
+
+
+if not hasattr(DynamicCache(), "key_cache"):
+    from transformers.cache_utils import DynamicLayer
+
+    DynamicCache.key_cache = _make_layer_tensor_property("keys")
+    DynamicCache.value_cache = _make_layer_tensor_property("values")
+    if not hasattr(DynamicCache, "from_legacy_cache"):
+        DynamicCache.from_legacy_cache = classmethod(lambda cls, past_key_values: cls(ddp_cache_data=past_key_values))
+
+# transformers 5 also dropped `cache[layer_idx]` indexing (used as `cache[0][0].shape[2]` for the cache length).
+# 4.x returned (keys, values) for DynamicCache and (self_keys, self_values, cross_keys, cross_values)
+# for EncoderDecoderCache.
+if not hasattr(DynamicCache, "__getitem__"):
+    from transformers.cache_utils import EncoderDecoderCache
+
+    def _dynamic_cache_getitem(self, layer_idx):
+        if layer_idx >= len(self.layers):
+            raise KeyError(f"Cache only has {len(self.layers)} layers, attempted to access layer with index {layer_idx}")
+        return self.key_cache[layer_idx], self.value_cache[layer_idx]
+
+    def _encoder_decoder_cache_getitem(self, layer_idx):
+        if layer_idx >= len(self):
+            raise KeyError(f"Cache only has {len(self)} layers, attempted to access layer with index {layer_idx}")
+        cross = self.cross_attention_cache
+        cross_kv = cross[layer_idx] if layer_idx < len(cross.layers) else (torch.tensor([]), torch.tensor([]))
+        return self.self_attention_cache[layer_idx] + cross_kv
+
+    DynamicCache.__getitem__ = _dynamic_cache_getitem
+    EncoderDecoderCache.__getitem__ = _encoder_decoder_cache_getitem
+
+
 class InvalidSamplingProbabilitiesError(RuntimeError):
     """Raised before multinomial sampling when probabilities are unsafe."""
 

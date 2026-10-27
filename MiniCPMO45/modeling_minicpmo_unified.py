@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import json
 import logging
 import math
@@ -183,6 +184,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             "tts_temperature": 0.8,
             "tts_repetition_penalty": 1.05,
         }
+
+        self.post_init()
 
     def _ensure_asset_dir(self, asset_subpath: str, model_dir: Optional[str] = None) -> str:
         """Ensure asset directory exists, downloading from HF if needed."""
@@ -5821,13 +5824,21 @@ class MiniCPMWhisperEncoderLayer(nn.Module):
     ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.self_attn_layer_norm(hidden_states)
-        hidden_states, attn_weights, past_key_values = self.self_attn(
+        attn_kwargs = dict(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
-            layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
-            past_key_value=past_key_values,
         )
+        # transformers>=5: `past_key_values` kwarg, no head mask, returns (output, weights) and updates the cache in place
+        if "past_key_values" in inspect.signature(self.self_attn.forward).parameters:
+            attn_kwargs["past_key_values"] = past_key_values
+        else:
+            attn_kwargs["past_key_value"] = past_key_values
+            attn_kwargs["layer_head_mask"] = layer_head_mask
+        attn_outputs = self.self_attn(**attn_kwargs)
+        hidden_states, attn_weights = attn_outputs[:2]
+        if len(attn_outputs) > 2:
+            past_key_values = attn_outputs[2]
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -5885,7 +5896,7 @@ class MiniCPMWhisperEncoder(WhisperEncoder):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         # 初始化debug字典
         debug_info = {} if return_debug else None
@@ -5973,7 +5984,7 @@ class MiniCPMWhisperEncoder(WhisperEncoder):
                 past_key_values = EncoderDecoderCache(past_key_values, DynamicCache())
             else:
                 pass
-            past_key_values_length = past_key_values.self_attention_cache.get_usable_length(inputs_embeds.shape[1])
+            past_key_values_length = past_key_values.self_attention_cache.get_seq_length()
             if inputs_embeds.shape[1] + past_key_values_length > embed_pos.shape[0]:
                 logger.warning("seems the audio is longer than 30s. repeating the last part of the audio")
                 embed_pos_front = embed_pos[past_key_values_length:, :]

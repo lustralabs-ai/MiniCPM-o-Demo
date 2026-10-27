@@ -30,6 +30,13 @@ from pydantic import BaseModel, Field
 from worker_state import WorkerState, WorkerStatus
 from runtime.protocol import DEFAULT_WORKER_CAPABILITIES
 from runtime.session import BackendRuntimeSession
+from transformers import PretrainedConfig
+
+# Fallback patch for the missing generation attribute
+for attr in ['top_p', 'top_k', 'repetition_penalty']:
+    if not hasattr(PretrainedConfig, attr):
+        setattr(PretrainedConfig, attr, None)
+
 
 logging.basicConfig(
     level=logging.INFO,
