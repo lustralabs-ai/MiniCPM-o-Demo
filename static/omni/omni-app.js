@@ -155,6 +155,7 @@ const settingsPersistence = new SettingsPersistence('omni_settings', [
     { id: 'padAfterSec', type: 'number' },
     // Session
     { id: 'playbackDelay', type: 'number' },
+    { id: 'frameIntervalSec', type: 'number' },
     { id: 'maxKvTokens', type: 'number' },
     { id: 'omniLengthPenalty', type: 'number' },
     { id: 'visionHD', type: 'checkbox' },
@@ -1618,7 +1619,8 @@ async function startSession() {
             async () => {
                 media.onChunk = (chunk) => {
                     const msg = { type: 'audio_chunk', audio_base64: arrayBufferToBase64(chunk.audio.buffer) };
-                    if (chunk.frameBase64) msg.frame_base64_list = [chunk.frameBase64];
+                    const frameEvery = Math.max(1, parseInt(document.getElementById('frameIntervalSec').value, 10) || 1);
+                    if (chunk.frameBase64 && session.chunksSent % frameEvery === 0) msg.frame_base64_list = [chunk.frameBase64];
                     const effectiveSlice = getEffectiveMaxSliceNums();
                     if (effectiveSlice > 1) msg.max_slice_nums = effectiveSlice;
                     session.sendChunk(msg);

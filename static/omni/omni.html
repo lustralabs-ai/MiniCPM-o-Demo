@@ -212,6 +212,11 @@
                     <input type="number" class="cg-input-sm" id="playbackDelay" value="200" min="0" max="2000" step="50">
                     <span style="font-size:10px;color:#888;">ms</span>
                 </div>
+                <div class="cg-row inline" data-tip="Send one camera frame every N seconds of audio, higher = fewer vision tokens and less compute per second">
+                    <span class="cg-label" style="flex:none;">Frame every</span>
+                    <input type="number" class="cg-input-sm" id="frameIntervalSec" value="1" min="1" max="10" step="1">
+                    <span style="font-size:10px;color:#888;">s</span>
+                </div>
                 <div class="cg-row inline" data-tip="Max KV cache size — hard limit 8192 (max training context length)">
                     <span class="cg-label" style="flex:none;">MaxKV</span>
                     <input type="number" class="cg-input-sm" id="maxKvTokens" value="8192" min="512" max="8192" step="512">
