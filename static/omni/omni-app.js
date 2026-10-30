@@ -1619,8 +1619,10 @@ async function startSession() {
             async () => {
                 media.onChunk = (chunk) => {
                     const msg = { type: 'audio_chunk', audio_base64: arrayBufferToBase64(chunk.audio.buffer) };
-                    const frameEvery = Math.max(1, parseInt(document.getElementById('frameIntervalSec').value, 10) || 1);
-                    if (chunk.frameBase64 && session.chunksSent % frameEvery === 0) msg.frame_base64_list = [chunk.frameBase64];
+                    // Chunks are 1 s, so a fractional interval alternates gaps (1.5 -> 2, 1, 2, 1, ...).
+                    const frameEvery = Math.max(1, parseFloat(document.getElementById('frameIntervalSec').value) || 1);
+                    const i = session.chunksSent;
+                    if (chunk.frameBase64 && (i === 0 || Math.floor(i / frameEvery) !== Math.floor((i - 1) / frameEvery))) msg.frame_base64_list = [chunk.frameBase64];
                     const effectiveSlice = getEffectiveMaxSliceNums();
                     if (effectiveSlice > 1) msg.max_slice_nums = effectiveSlice;
                     session.sendChunk(msg);
