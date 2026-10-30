@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Fit capture</title>
+<link rel="stylesheet" href="/static/fit-capture/fit-capture.css">
+</head>
+<body>
+<h1>Fit capture</h1>
+
+<section id="intro" class="card">
+  <strong>How it works</strong>
+  <ol>
+    <li>Put the phone on a stand, or hand it to a friend, and press Start.</li>
+    <li>Step back until your whole body, head to feet, is in view.</li>
+    <li>Hold both arms out straight, a little away from your body, like a Christmas tree.</li>
+    <li>Turn slowly in place through one full circle and finish facing the camera.</li>
+  </ol>
+  <p class="muted" style="margin:8px 0 0">The assistant talks you through it, and you can ask it questions at any time. Recording stops on its own.</p>
+  <p id="error" class="error hidden"></p>
+</section>
+
+<details id="settings" class="card">
+  <summary>Settings</summary>
+  <div class="grid">
+    <label>Camera
+      <select id="cfgCamera">
+        <option value="facing:environment">Back camera</option>
+        <option value="facing:user">Front camera</option>
+      </select>
+    </label>
+    <label>Resolution
+      <select id="cfgRes">
+        <option value="720">720p</option>
+        <option value="1080">1080p</option>
+      </select>
+    </label>
+    <label>Flow driven by
+      <select id="cfgDriver">
+        <option value="agent">Agent (emoji markers)</option>
+        <option value="tracker">Pose tracker</option>
+      </select>
+    </label>
+    <label>Fail after (s)
+      <input id="cfgTimeout" type="number" min="20" max="900" step="10" value="120">
+    </label>
+    <label>Max recording (s)
+      <input id="cfgMaxRec" type="number" min="10" max="120" step="5" value="40">
+    </label>
+    <label>Frame every (s)
+      <select id="cfgFrameEvery">
+        <option value="1">1</option>
+        <option value="2">2</option>
+      </select>
+    </label>
+    <label>Vision slices
+      <select id="cfgSlices">
+        <option value="1">1 (~64 tokens)</option>
+        <option value="2">2 (~192 tokens)</option>
+      </select>
+    </label>
+    <label>Reset context at KV
+      <input id="cfgResetKv" type="number" min="2000" max="8000" step="250" value="5500">
+    </label>
+    <label>Listen bias (lower = more talkative)
+      <input id="cfgListenScale" type="number" min="-2" max="2" step="0.25" value="0">
+    </label>
+    <label class="check"><input id="cfgReset" type="checkbox" checked> Context resets (needs rebuilt cpp server)</label>
+    <label class="check"><input id="cfgHints" type="checkbox" checked> Send tracker findings to the agent</label>
+    <label class="check"><input id="cfgGate" type="checkbox" checked> Agent start needs tracker OK</label>
+    <label class="check"><input id="cfgPhrases" type="checkbox" checked> Phrase fallback for missing markers</label>
+    <label class="check"><input id="cfgMirror" type="checkbox"> Mirror preview</label>
+    <label class="check"><input id="cfgDebug" type="checkbox"> Debug log</label>
+  </div>
+</details>
+
+<button id="startBtn" class="primary">Start</button>
+
+<section id="capture" class="hidden">
+  <div class="stage" id="stage">
+    <div class="view" id="view">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div id="countdown" class="countdown hidden"></div>
+    <div class="top">
+      <div id="banner" class="banner">Starting…</div>
+      <div id="chips" class="chips">
+        <span id="chipStep" class="chip">idle</span>
+        <span id="chipAgent" class="chip">agent: —</span>
+        <span id="chipKv" class="chip">kv 0</span>
+        <span id="chipTime" class="chip">0s</span>
+        <span id="chipRec" class="chip rec hidden">● REC</span>
+      </div>
+    </div>
+    <div class="bottom">
+      <div id="subtitle" class="subtitle"></div>
+      <div class="track"><div id="progressFill"></div></div>
+      <div id="progressText">0° / 360°</div>
+    </div>
+    <pre id="debugLog" class="debug hidden"></pre>
+  </div>
+  <div class="buttons">
+    <button id="restartBtn" class="secondary">Start over</button>
+    <button id="stopBtn" class="danger">Cancel</button>
+  </div>
+</section>
+
+<section id="result" class="card hidden">
+  <strong id="resultTitle">Thank you!</strong>
+  <video id="playback" controls playsinline></video>
+  <p id="stats" class="muted"></p>
+  <div class="stack">
+    <a id="download" class="linkbtn">Download video</a>
+    <button id="again" class="primary">Record again</button>
+  </div>
+</section>
+
+<canvas id="frame" class="offscreen"></canvas>
+<canvas id="sendCanvas" class="offscreen"></canvas>
+
+<script src="/static/shared/client-identity.js"></script>
+<script type="module" src="/static/fit-capture/fit-capture.js"></script>
+</body>
+</html>

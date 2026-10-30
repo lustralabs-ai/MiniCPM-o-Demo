@@ -1440,6 +1440,22 @@ async def mobile_omni():
     return HTMLResponse("<h1>Mobile Omni</h1><p>Page not found</p>", status_code=404)
 
 
+@app.get("/fit-capture", include_in_schema=False)
+async def fit_capture_redirect():
+    return RedirectResponse(url="/fit-capture/", status_code=302)
+
+
+@app.get("/fit-capture/", response_class=HTMLResponse)
+async def fit_capture():
+    """Agent-guided 360° body-turn capture for fit measurement (static/fit-capture/)."""
+    if not app_registry.is_enabled("omni"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "fit-capture", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Fit capture</h1><p>Page not found</p>", status_code=404)
+
+
 @app.get("/mobile", include_in_schema=False)
 async def mobile_redirect():
     """移动端入口重定向到带尾斜杠版本，确保相对资源路径正确解析"""

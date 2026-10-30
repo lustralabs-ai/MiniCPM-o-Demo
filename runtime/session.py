@@ -64,6 +64,9 @@ class BackendRuntimeSession:
     async def push(self, input_payload: Dict[str, Any]) -> None:
         await self.backend.push(input_payload)
 
+    async def reset(self, payload: Optional[Dict[str, Any]] = None) -> None:
+        await self.backend.reset(payload)
+
     async def pull(self) -> RuntimeEvent:
         event = await self.backend.pull()
         return backend_event_to_runtime_event(event)

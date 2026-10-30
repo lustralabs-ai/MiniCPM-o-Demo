@@ -87,6 +87,8 @@ export class RealtimeSession {
     onPauseStateChange(state) {}
     /** New: protocol event logged (for data flow panel). */
     onProtocolEvent(entry) {}
+    /** session.reset.done: backend cleared the LLM context and re-prefilled the system prompt */
+    onSessionReset(msg) {}
 
     // ==== Protocol event logging ====
     _logProtoEvent(dir, type, summary, full) {
@@ -271,6 +273,19 @@ export class RealtimeSession {
         this.onMetrics({ type: 'result', chunksSent: this.chunksSent });
     }
 
+    /**
+     * Same-session context reset (cpp backend): clear the LLM KV cache and
+     * re-prefill a new system prompt (ref audio is kept). Send it while the
+     * model is listening; the reply is session.reset.done -> onSessionReset.
+     */
+    resetContext(systemPrompt) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+        const msg = { type: 'session.reset', payload: { system_prompt: systemPrompt } };
+        this.ws.send(JSON.stringify(msg));
+        this._logProtoEvent('client', 'session.reset', `prompt=${systemPrompt.length}ch`, msg);
+        return true;
+    }
+
     toggleForceListen() {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.forceListenActive = !this.forceListenActive;
@@ -384,6 +399,13 @@ export class RealtimeSession {
 
             case 'response.output.delta':
                 this._handleOutputDelta(msg);
+                break;
+
+            case 'session.reset.done':
+                this._logProtoEvent('server', 'session.reset.done',
+                    `ok=${msg.ok} kv=${msg.metrics?.kv_cache_length}`, msg);
+                this._lastKvCacheLength = msg.metrics?.kv_cache_length || 0;
+                this.onSessionReset(msg);
                 break;
 
             case 'session.closed':

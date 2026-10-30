@@ -1,0 +1,52 @@
+/* Dark theme adapted from drape/apps/webcam_capture/capture_360.html */
+:root{--bg:#0f1115;--fg:#f2f4f7;--muted:#9aa3b2;--accent:#3b82f6;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--card:#171a21}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{min-height:100dvh;padding:16px;max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+h1{font-size:20px;margin:4px 0 0}
+.card{background:var(--card);border-radius:14px;padding:14px 16px;font-size:15px}
+.card ol{margin:8px 0 0 20px;padding:0;line-height:1.4}
+.card li+li{margin-top:4px}
+summary{cursor:pointer;font-weight:600}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;margin-top:12px}
+.grid label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.grid label.check{flex-direction:row;align-items:center;grid-column:1/-1;color:var(--fg)}
+.grid select,.grid input[type=number]{font:inherit;font-size:15px;padding:8px;border-radius:8px;border:1px solid #2a2f3a;background:#0f1115;color:var(--fg)}
+button{font:inherit;border:0;border-radius:12px;padding:14px 18px;font-size:17px;font-weight:600;cursor:pointer;width:100%}
+button:disabled{opacity:.5;cursor:default}
+.primary{background:var(--accent);color:#fff}
+.danger{background:var(--bad);color:#fff}
+.secondary{background:#2a2f3a;color:var(--fg)}
+.linkbtn{display:block;text-align:center;text-decoration:none;color:var(--fg);padding:14px;border-radius:12px;background:#2a2f3a;font-weight:600}
+.hidden{display:none!important}
+.muted{color:var(--muted);font-size:14px}
+.error{color:var(--bad);font-weight:600}
+.stack{display:flex;flex-direction:column;gap:12px}
+
+/* While capturing, use the whole screen: the user will be standing far back. */
+#capture{position:fixed;inset:0;z-index:10;background:#000;display:flex;flex-direction:column}
+.stage{position:relative;flex:1;min-height:0;width:100%;background:#000;overflow:hidden}
+.view{position:absolute;inset:0}
+.view.mirror{transform:scaleX(-1)}
+.view>*{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.top{position:absolute;top:0;left:0;right:0;background:rgba(0,0,0,.55);padding-top:env(safe-area-inset-top)}
+.banner{padding:clamp(10px,2vmin,24px) 12px 6px;text-align:center;font-size:clamp(22px,5vmin,48px);font-weight:700}
+.chips{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:0 8px 8px}
+.chip{font-size:12px;padding:2px 8px;border-radius:999px;background:#2a2f3a;color:var(--muted)}
+.chip.speaking{background:var(--accent);color:#fff}
+.chip.warn{background:var(--warn);color:#000}
+.chip.rec{background:var(--bad);color:#fff;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.4}}
+.countdown{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(120px,40vmin,420px);font-weight:800;color:#fff;text-shadow:0 0 20px #000;pointer-events:none}
+.bottom{position:absolute;left:0;right:0;bottom:0;padding:12px 14px;background:rgba(0,0,0,.55)}
+.subtitle{min-height:1.3em;margin-bottom:8px;text-align:center;font-size:clamp(16px,3.4vmin,30px);color:#e5e7eb}
+.track{height:clamp(10px,1.8vmin,20px);border-radius:5px;background:#333;overflow:hidden}
+#progressFill{height:100%;width:0;background:var(--ok);transition:width .15s linear}
+#progressText{margin-top:6px;font-size:clamp(16px,3.2vmin,30px);text-align:center}
+.debug{position:absolute;left:6px;right:6px;top:120px;max-height:40%;overflow:auto;margin:0;padding:6px 8px;border-radius:6px;background:rgba(0,0,0,.7);color:#cbd5e1;font-size:11px;line-height:1.35;white-space:pre-wrap;pointer-events:none}
+.buttons{display:flex;flex:none;padding-bottom:env(safe-area-inset-bottom);background:#000}
+.buttons>button{border-radius:0;padding:14px}
+
+video#playback{display:block;width:auto;max-width:100%;max-height:clamp(180px,calc(100dvh - 400px),900px);margin:10px auto 0;border-radius:12px;background:#000}
+#stats{white-space:pre-line;margin:10px 0}
+.offscreen{position:fixed;left:-9999px;top:0;width:1px;height:1px;pointer-events:none}

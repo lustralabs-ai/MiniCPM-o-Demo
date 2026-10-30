@@ -85,6 +85,18 @@ class RemoteBackendSession:
             "input": input_payload,
         }))
 
+    async def reset(self, payload: Optional[Dict[str, Any]] = None) -> None:
+        """Ask the backend to clear the LLM context and re-prefill a new system prompt.
+
+        The reply (``session.reset.done``) arrives on the normal pull stream.
+        """
+        if self._ws is None or self._closed:
+            raise RuntimeError("backend session is not active")
+        await self._ws.send(json.dumps({
+            "type": "session.reset",
+            "payload": dict(payload or {}),
+        }))
+
     async def pull(self) -> Dict[str, Any]:
         if self._ws is None:
             raise RuntimeError("backend session WebSocket is not connected")

@@ -241,6 +241,12 @@ async def _handle_remote_backend_runtime_ws(
                     await runtime.push(_input_payload(msg))
                     continue
 
+                if msg_type == "session.reset":
+                    # Same-session context reset with a new system prompt;
+                    # backend replies session.reset.done on the event stream.
+                    await runtime.reset(msg.get("payload") or {})
+                    continue
+
                 if msg_type == "session.close":
                     close_event = await runtime.unary("close", {"reason": str(msg.get("reason") or "client_closed")})
                     backend_closed = True
