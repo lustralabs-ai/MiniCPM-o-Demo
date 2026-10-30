@@ -91,14 +91,22 @@ export class AudioPlayer {
     /** Start a new SPEAK turn */
     beginTurn() {
         if (this._turnActive) return;
-        this._stopAllSources();
+        // The server can send a turn's last audio chunk just after its listen, so a
+        // "new" turn may start while the previous one is still queued. Append to that
+        // tail instead of cutting it off (which dropped up to a few seconds of speech).
+        const tail = this._playing && this._ctx && this._nextTime > this._ctx.currentTime;
+        if (!tail) this._stopAllSources();
         this._turnActive = true;
-        this._playing = false;
+        this._playing = tail;
         this._turnIdx++;
         this._pendingChunks = [];
-        this._nextTime = 0;
+        if (tail) {
+            this._startAheadMonitor();
+        } else {
+            this._nextTime = 0;
+            this._playbackStartTime = 0;
+        }
         this._firstChunkTime = 0;
-        this._playbackStartTime = 0;
         this._gapCount = 0;
         this._totalShiftMs = 0;
         this._lastAheadMs = 0;
