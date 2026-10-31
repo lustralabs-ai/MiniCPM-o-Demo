@@ -105,8 +105,10 @@ component_env() {
         # falls back to CPU, which leaves duplex mode stuck listening.
         # HIP graphs get recaptured on every turn, which stalls the second
         # token2wav window of each reply for 2-3 s; running without them is faster.
+        # rocBLAS's hipBLASLt path makes the fp16 token2wav GEMMs ~17% faster on gfx1151.
         # OMNI_T2W_* let token2wav build a speaker prompt from the session's ref audio.
         cpp/backend) echo "MTMD_BACKEND_DEVICE=ROCm0 GGML_CUDA_DISABLE_GRAPHS=${GGML_CUDA_DISABLE_GRAPHS:-1}" \
+                          "ROCBLAS_USE_HIPBLASLT=${ROCBLAS_USE_HIPBLASLT:-1}" \
                           "OMNI_T2W_ASSET_DIR=$HF_MODEL/assets/token2wav OMNI_T2W_PYTHON=$PYTHON" ;;
     esac
 }

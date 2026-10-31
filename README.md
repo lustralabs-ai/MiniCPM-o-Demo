@@ -194,6 +194,47 @@ minicpmo45_service/
 
 If you need bare-metal debugging, start from `config.example.json` and `config.py`. CLI arguments still take precedence over `config.json`, and missing fields fall back to Pydantic defaults.
 
+### `config.json` reference
+
+`config.json` sits next to `config.py` in the repo root. It is gitignored; create it with `cp config.example.json config.json`. Every field is optional, so write only the ones you want to change. If the file is missing, every field takes its default. Unknown keys are ignored. The schema, with descriptions, is in `config.py`.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `model.model_path` | `""` | HuggingFace model directory. Only the PyTorch backend needs it, and `--model-path` overrides it. |
+| `model.pt_path` | `null` | Optional extra `.pt` weights. |
+| `model.attn_implementation` | `"auto"` | `auto` uses `flash_attention_2` when available and falls back to `sdpa`. Also accepts `flash_attention_2`, `sdpa` and `eager`. |
+| `audio.ref_audio_path` | `assets/ref_audio/ref_minicpm_signature.wav` | Default reference voice for TTS voice cloning. |
+| `audio.playback_delay_ms` | `200` | How long the frontend buffers after the first speech chunk before it starts playback (0–2000). |
+| `audio.chat_vocoder` | `"token2wav"` | Vocoder for non-streaming chat, either `token2wav` or `cosyvoice2`. Streaming and duplex always use token2wav. |
+| `service.gateway_port` | `8006` | Gateway port. `--port` overrides it, and `omni.sh` always passes `--port`. |
+| `service.worker_base_port` | `22400` | Port of worker 0. Worker *n* uses base + *n*. |
+| `service.max_queue_size` | `1000` | Maximum number of queued requests. |
+| `service.request_timeout` | `300.0` | Request timeout in seconds. |
+| `service.compile` | `false` | Applies `torch.compile` to the core modules (PyTorch backend). |
+| `service.data_dir` | `"data"` | Data directory, relative to the repo root. Session recordings go in `<data_dir>/sessions/`. |
+| `service.eta_chat_s`, `eta_half_duplex_s`, `eta_audio_duplex_s`, `eta_omni_duplex_s` | 15 / 180 / 120 / 90 | Starting estimates, in seconds, for the queue ETA of each mode. Admins can adjust them at runtime. |
+| `service.eta_ema_alpha` | `0.3` | EMA smoothing factor for the measured ETA. |
+| `service.eta_ema_min_samples` | `3` | Number of samples needed before the EMA replaces the starting estimate. |
+| `duplex.pause_timeout` | `60.0` | How many seconds a paused duplex session holds its worker before releasing it. |
+| `recording.enabled` | `true` | The gateway records every session (model input and output plus raw media) to `<data_dir>/sessions/<session_id>/`. |
+| `recording.session_retention_days` | `-1` | Deletes recordings older than this many days. `-1` keeps them forever. |
+| `recording.max_storage_gb` | `-1` | Total size cap for recordings. When it's exceeded, the oldest are deleted first. `-1` means no cap. |
+
+The gateway runs the retention and size cleanup once a day, starting a minute after it boots. If both limits are `-1`, it does nothing. To stop recording sessions altogether:
+
+```json
+{ "recording": { "enabled": false } }
+```
+
+### llama.cpp backend logging and temp files
+
+The `cpp` stack's backend (`llama-omni-server`) is controlled by environment variables rather than `config.json`. `omni.sh` passes them through, for example `OMNI_LOG_VERBOSE=1 ./omni.sh start cpp`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `OMNI_LOG_VERBOSE=1` | off | Turns on the per-step trace: encoder, prefill and decode `[prof]` lines, TTS chunks and T2W windows. When it is off, the log shows only session start and end, model init, KV slides, turn-end flush trims, first-audio latency, warnings and errors. |
+| `OMNI_DEBUG_DUMP=1` | off | Keeps the debug dumps under `/tmp/omni_ws/<session_id>/`. Each step's input wav and jpg stays there until the session ends. The dumps are `llm_debug/`, `tts_txt/`, and in `tts_wav/` the per-window `wav_N.wav`, token files and merged wavs. When it is off, nothing is dumped, each input file is deleted once the encoder has read it, and the session directory is removed when the session ends. |
+
 
 ## Resource Consumption
 
