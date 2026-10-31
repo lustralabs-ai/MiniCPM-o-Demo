@@ -184,7 +184,16 @@ start_component() {
 
 stop_component() {
     local stack="$1" comp="$2"
-    local pid; pid="$(component_pid "$comp")" || { rm -f "$(pidfile "$comp")"; return 0; }
+    local pid
+    if ! pid="$(component_pid "$comp")"; then
+        rm -f "$(pidfile "$comp")"
+        # e.g. started from a shell with a different /tmp or OMNI_STATE_DIR
+        local port; port="$(component_port "$comp")"
+        if [ -n "$port" ] && ss -ltnH "sport = :$port" 2>/dev/null | grep -q .; then
+            log "warning: $stack/$comp port $port is in use but has no pid file in $RUN_DIR; not stopping it"
+        fi
+        return 0
+    fi
     log "stopping $stack/$comp (pid $pid)"
     kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
     for _ in $(seq 30); do
