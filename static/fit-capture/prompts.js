@@ -58,7 +58,6 @@ const TRACKER_TEXT = {
  *   attempt: 1-based attempt number
  *   elapsedSec, timeoutSec: seconds since Start, and the overall limit
  *   resets: how many context resets so far
- *   lastSaid: the agent's last utterance (markers stripped), or ''
  *   note: optional one-off event, e.g. why a start request was refused
  */
 export function buildPrompt(st) {
@@ -107,8 +106,8 @@ export function buildPrompt(st) {
     if (progress.length) lines.push(progress.join(' '));
 
     if (st.resets > 0) {
-        lines.push('The conversation is already under way; do not greet or introduce yourself again.' +
-            (st.lastSaid ? ` You last said: "${st.lastSaid.slice(0, 120)}"` : ''));
+        // Quoting the agent's last line here made it repeat that line verbatim after the reset.
+        lines.push('The conversation is already under way; do not greet or introduce yourself again, and do not repeat earlier instructions.');
     } else {
         lines.push('Start by greeting them in one short sentence and giving the first instruction.');
     }
@@ -131,9 +130,9 @@ export function findMarkers(text) {
     return out;
 }
 
-/** Text with emoji (and their joiners/selectors) removed, for subtitles and lastSaid. */
+/** Text with emoji (and their joiners/selectors) and stray <think> tags removed, for subtitles. */
 export function stripEmoji(text) {
-    return text.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{20E3}]/gu, '').replace(/\s{2,}/g, ' ').trim();
+    return text.replace(/<\/?think>/g, '').replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{20E3}]/gu, '').replace(/\s{2,}/g, ' ').trim();
 }
 
 // Optional fallback for experiments: phrases that imply a marker the model forgot to emit.

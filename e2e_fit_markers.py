@@ -7,6 +7,7 @@
 #   --reset-at S: send session.reset at S seconds with the prompt for --reset-step (needs the rebuilt cpp server)
 #   --listen X: init config.listen_prob_scale (the page's 'Listen bias'; omit for the server default)
 #   --gate: send a frame only when the view changes or every 4 s, like the page's frame gating
+#   --no-frames-after-reset: audio only after --reset-at, as the page does once the camera stops (done/failed)
 #
 # The prompt is built by static/fit-capture/prompts.js (via node) so this tests what the page sends.
 import asyncio, base64, io, json, subprocess, sys, time
@@ -20,7 +21,7 @@ port = opt("--port", "8016"); secs = opt("--secs", 30); driver = opt("--driver",
 wav = opt("--wav", ""); wav_at = opt("--at", 5.0); out = opt("--out", "")
 reset_at = opt("--reset-at", -1.0); reset_step = opt("--reset-step", "recording")
 view_secs = opt("--view-secs", 5); slices = opt("--slices", 1)
-listen = opt("--listen", -99.0); gate = "--gate" in args
+listen = opt("--listen", -99.0); gate = "--gate" in args; blind_after_reset = "--no-frames-after-reset" in args
 POSE = "/home/carl/lustra/drape/apps/tester-web/public/pose-guides"
 MARKERS = {"🎬": "start", "🎥": "start", "✅": "done", "✔": "done", "🔄": "restart", "🔁": "restart", "🛑": "stop", "⛔": "stop"}
 
@@ -89,7 +90,9 @@ async def main():
                 print(f"{time.monotonic() - t0:6.1f} → session.reset ({reset_step})")
             view = seq[min(len(seq) - 1, n // view_secs)]
             inp = {"audio": base64.b64encode(audio[n * 16000:(n + 1) * 16000].tobytes()).decode()}
-            if not gate or view != last_view or n - last_frame_at >= 4:
+            if blind_after_reset and 0 <= reset_at <= n:
+                pass
+            elif not gate or view != last_view or n - last_frame_at >= 4:
                 inp["video_frames"] = [frames[view]]; last_view = view; last_frame_at = n; nframes += 1
             if slices > 1: inp["max_slice_nums"] = slices
             await ws.send(json.dumps({"type": "input.append", "input": inp}))

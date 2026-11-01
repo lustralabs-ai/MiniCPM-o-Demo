@@ -36,7 +36,7 @@ const FLOW = {
     hintResetGapMs: 8000,    // minimum gap between tracker-driven resets
     resetTimeoutMs: 6000,    // give up waiting for session.reset.done
     forceResetOverKv: 1500,  // reset even mid-speech once KV passes threshold + this
-    lingerMs: 7000,          // keep the session open for a closing sentence
+    lingerMaxMs: 15000,      // longest wait for the closing sentence to be spoken
     speechHoldMs: 700,       // agent counts as speaking this long after playback runs dry
 };
 
@@ -133,7 +133,8 @@ let step = 'idle';
 let session = null, PT = null, tracker = null, turn = null;
 let camStream = null, micStream = null, micCtx = null, captureNode = null, sinkNode = null;
 let rafId = 0, tickTimer = 0, lingerTimer = 0;
-let t0 = 0, attempt = 1, resets = 0, lastSaid = '', note = '';
+let t0 = 0, attempt = 1, resets = 0, note = '';
+let lingering = false, closingSpoke = false, closingDone = false;
 let speaking = false, lastAudibleAt = -Infinity, kv = 0, agentLost = false, refAudio = null;
 let pendingReset = null, resetInFlight = false, resetSentAt = 0, lastResetAt = 0;
 let candCodes = '', candSince = 0, promptCodes = '', liveCodes = [];
@@ -174,7 +175,6 @@ function promptState() {
         elapsedSec: elapsedSec(),
         timeoutSec: cfg.timeoutSec,
         resets,
-        lastSaid,
         note,
     };
 }
@@ -282,6 +282,7 @@ function handleAgentText(text) {
 
 function onMarker(name, src) {
     log(`★ marker ${name} (${src}) in ${step}`);
+    if (lingering) return;   // the result is already on screen; a stray 🛑 must not replace it
     const agentDrives = cfg.driver === 'agent' && !agentLost;
 
     if (name === 'stop') { cancelAll('Stopped at your request.'); return; }
@@ -331,6 +332,7 @@ function createSession() {
 
     s.onSpeakStart = text => {
         speaking = true;
+        if (lingering && !pendingReset && !resetInFlight) closingSpoke = true;
         fired = new Set();
         setChip(els.chipAgent, 'agent: speaking', 'speaking');
         handleAgentText(text);
@@ -338,12 +340,12 @@ function createSession() {
     };
     s.onSpeakUpdate = (_h, text) => handleAgentText(text);
     s.onSpeakEnd = () => {
-        lastSaid = stripEmoji(s.currentSpeakText || '');
         log(`agent: "${s.currentSpeakText}"`);
     };
     s.onListenResult = () => {
         // The LLM is listening again; the chip and pending resets follow playback (tick()).
         speaking = false;
+        if (closingSpoke) closingDone = true;   // stop the mic so the model does not carry on
         maybeReset();
     };
 
@@ -433,7 +435,7 @@ async function startMic() {
 }
 
 function onMicChunk(audio) {
-    if (!session?.running) return;
+    if (!session?.running || closingDone) return;
     const msg = { type: 'audio_chunk', audio_base64: arrayBufferToBase64(audio.buffer) };
     if (camStream && session.chunksSent % cfg.frameEvery === 0) {
         const why = frameReason();
@@ -704,7 +706,9 @@ function linger() {
     camStream = null;
     cancelAnimationFrame(rafId);
     clearTimeout(lingerTimer);
-    lingerTimer = setTimeout(endSession, session?.running && cfg.reset ? FLOW.lingerMs : 0);
+    // tick() ends the session once the closing reply has played; this is the backstop.
+    lingering = true; closingSpoke = closingDone = false;
+    lingerTimer = setTimeout(endSession, session?.running && cfg.reset ? FLOW.lingerMaxMs : 0);
 }
 
 function showResult(blob, ext, lines, title) {
@@ -740,6 +744,7 @@ function tick() {
         }
     }
     maybeReset();
+    if (closingDone && !agentAudible()) { endSession(); return; }
     // trackTurn() enforces this too, but only runs when the pose tracker is loaded.
     if (step === 'recording' && now() - recordStart > cfg.maxRecSec * 1000) { stopRecording('max_length'); return; }
     if (!ACTIVE_STEPS.has(step) || e < cfg.timeoutSec) return;
@@ -788,7 +793,8 @@ els.startBtn.onclick = async () => {
     micCtx.resume().catch(() => {});
 
     step = 'connecting';
-    attempt = 1; resets = 0; lastSaid = ''; note = ''; kv = 0; agentLost = false;
+    attempt = 1; resets = 0; note = '';
+    lingering = closingSpoke = closingDone = false; kv = 0; agentLost = false;
     pendingReset = null; resetInFlight = false; lastResetAt = 0;
     candCodes = promptCodes = ''; liveCodes = []; lastFramingOkAt = -Infinity; lastFr = null;
     poseLm = sent = null; frameStats = { sent: 0, skipped: 0 }; lastAudibleAt = -Infinity;

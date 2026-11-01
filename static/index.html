@@ -146,6 +146,7 @@
         .mode-card.omni .card-icon { background: #d4e4f7; }
         .mode-card.audio .card-icon { background: #e8f0e8; }
         .mode-card.mobile .card-icon { background: #f3e8ff; }
+        .mode-card.fit .card-icon { background: #fdebd8; }
         .mode-card .card-title {
             font-size: 18px;
             font-weight: 600;
@@ -462,6 +463,15 @@
         desc: t.mobileDesc,
     };
 
+    // The fit page is English-only, so its card is too.
+    const FIT_CAPTURE_CARD = {
+        route: '/fit-capture/',
+        css: 'fit',
+        icon: '🧍',
+        title: 'Fit Capture',
+        desc: 'A voice agent coaches you through a 360° turn and records a video for clothing-fit measurement.',
+    };
+
     document.getElementById('home-title').textContent = t.chooseMode;
     document.getElementById('recent-title').textContent = t.recentSessions;
     document.getElementById('recent-clear-btn').textContent = t.clearRecent;
@@ -517,7 +527,7 @@
                 });
             }) : [];
 
-        cardsEl.innerHTML = [renderCard(MOBILE_PREVIEW_CARD), ...appCards].join('');
+        cardsEl.innerHTML = [renderCard(FIT_CAPTURE_CARD), renderCard(MOBILE_PREVIEW_CARD), ...appCards].join('');
     })();
 
     (function() {
