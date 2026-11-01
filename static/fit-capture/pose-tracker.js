@@ -10,10 +10,12 @@
  * and the recording.
  */
 
-import { FilesetResolver, PoseLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+// Vendored copies; see vendor/mediapipe/README.md.
+import { FilesetResolver, PoseLandmarker } from './vendor/mediapipe/vision_bundle.mjs';
 
-const WASM_URL  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
+const VENDOR    = '/static/fit-capture/vendor/mediapipe';
+const WASM_URL  = `${VENDOR}/wasm`;
+const MODEL_URL = `${VENDOR}/pose_landmarker_full.task`;
 
 // Tuning constants: adjust after testing on real devices.
 export const POSE_CFG = {
