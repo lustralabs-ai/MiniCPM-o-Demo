@@ -37,7 +37,17 @@ const FLOW = {
     resetTimeoutMs: 6000,    // give up waiting for session.reset.done
     forceResetOverKv: 1500,  // reset even mid-speech once KV passes threshold + this
     lingerMs: 7000,          // keep the session open for a closing sentence
+    speechHoldMs: 700,       // agent counts as speaking this long after playback runs dry
 };
+
+// Frame gating: a frame costs ~64 KV tokens, so a still scene only gets a keepalive frame.
+const GATE = {
+    keepaliveMs: 4000,       // send at least this often, and always when there is no pose
+    poseMove: 0.06,          // mean landmark shift, as a fraction of body height
+    turnDeg: 20,             // during recording, send after this much more turn
+};
+// Nose, shoulders, elbows, wrists, hips, knees, ankles.
+const GATE_LM = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
 
 const $ = id => document.getElementById(id);
 const els = {
@@ -59,6 +69,7 @@ const SETTINGS_KEY = 'fitCapture.settings';
 const SETTING_IDS = {
     camera: 'cfgCamera', res: 'cfgRes', driver: 'cfgDriver', timeoutSec: 'cfgTimeout', maxRecSec: 'cfgMaxRec',
     frameEvery: 'cfgFrameEvery', slices: 'cfgSlices', resetKv: 'cfgResetKv', listenScale: 'cfgListenScale', reset: 'cfgReset',
+    frameGate: 'cfgFrameGate',
     hints: 'cfgHints', gate: 'cfgGate', phrases: 'cfgPhrases', mirror: 'cfgMirror', debug: 'cfgDebug',
 };
 
@@ -73,7 +84,7 @@ function readSettings() {
     s.timeoutSec = Math.max(20, s.timeoutSec || 120);
     s.maxRecSec = Math.max(10, s.maxRecSec || 40);
     s.resetKv = s.resetKv || 5500;
-    if (!Number.isFinite(s.listenScale)) s.listenScale = 0;
+    if (!Number.isFinite(s.listenScale)) s.listenScale = -0.5;
     if (location.hash === '#debug') s.debug = true;
     return s;
 }
@@ -123,13 +134,14 @@ let session = null, PT = null, tracker = null, turn = null;
 let camStream = null, micStream = null, micCtx = null, captureNode = null, sinkNode = null;
 let rafId = 0, tickTimer = 0, lingerTimer = 0;
 let t0 = 0, attempt = 1, resets = 0, lastSaid = '', note = '';
-let speaking = false, kv = 0, agentLost = false, refAudio = null;
+let speaking = false, lastAudibleAt = -Infinity, kv = 0, agentLost = false, refAudio = null;
 let pendingReset = null, resetInFlight = false, resetSentAt = 0, lastResetAt = 0;
 let candCodes = '', candSince = 0, promptCodes = '', liveCodes = [];
 let framingOkSince = null, lastFramingOkAt = -Infinity, armsOkSince = null;
 let countdownStart = 0, lastCount = null;
 let recorder = null, recChunks = [], mimeType = '', recordStart = 0, stopReason = '', canvasStream = null;
 let fired = new Set(), lastUrl = null, lastFr = null;
+let poseLm = null, sent = null, frameStats = { sent: 0, skipped: 0 };
 
 const ACTIVE_STEPS = new Set(['positioning', 'arms', 'countdown', 'recording']);
 const now = () => performance.now();
@@ -182,7 +194,8 @@ function maybeReset() {
         resetInFlight = false;
     }
     const overKv = kv >= cfg.resetKv + FLOW.forceResetOverKv;
-    if (speaking && !overKv) return;    // wait for the model to finish its sentence
+    if (agentAudible() && !overKv) return;    // wait until the reply has finished playing
+    if (overKv && agentAudible()) log(`⚠ forced reset mid-speech (kv=${kv})`);
     if (pendingReset.reason === 'tracker' && now() - lastResetAt < FLOW.hintResetGapMs) return;
 
     const prompt = buildPrompt(promptState());
@@ -194,6 +207,18 @@ function maybeReset() {
     pendingReset = null;
     resetInFlight = true;
     resetSentAt = lastResetAt = now();
+}
+
+// The model switches to listen while the Talker may still owe several seconds of audio
+// (turn-end flush), so "done speaking" means the audio player has run dry.
+// A short hold bridges gaps between flush chunks.
+function agentAudible() {
+    const p = session?.audioPlayer;
+    const t = now();
+    if (speaking || p?.turnActive || (p?.ctx && p.playing && p.nextTime > p.ctx.currentTime + 0.05)) {
+        lastAudibleAt = t;
+    }
+    return t - lastAudibleAt < FLOW.speechHoldMs;
 }
 
 // Stable tracker findings become a prompt update after FLOW.hintStableMs.
@@ -317,10 +342,8 @@ function createSession() {
         log(`agent: "${s.currentSpeakText}"`);
     };
     s.onListenResult = () => {
-        if (speaking) {
-            speaking = false;
-            setChip(els.chipAgent, 'agent: listening');
-        }
+        // The LLM is listening again; the chip and pending resets follow playback (tick()).
+        speaking = false;
         maybeReset();
     };
 
@@ -337,6 +360,7 @@ function createSession() {
         kv = msg.metrics?.kv_cache_length || 0;
         setChip(els.chipKv, `kv ${kv}`);
         log(`← reset.done ok=${msg.ok} kv=${kv} ${Math.round(now() - resetSentAt)}ms`);
+        sent = null;    // the fresh context has not seen the scene yet
         maybeReset();   // another reason may have queued meanwhile
     };
 
@@ -412,12 +436,40 @@ function onMicChunk(audio) {
     if (!session?.running) return;
     const msg = { type: 'audio_chunk', audio_base64: arrayBufferToBase64(audio.buffer) };
     if (camStream && session.chunksSent % cfg.frameEvery === 0) {
-        const f = grabSendFrame();
-        if (f) msg.frame_base64_list = [f];
+        const why = frameReason();
+        const f = why && grabSendFrame();
+        if (f) {
+            msg.frame_base64_list = [f];
+            sent = { at: now(), lm: poseLm, step, codes: liveCodes.join(','), deg: turn?.absDeg ?? 0 };
+            frameStats.sent++;
+            if (cfg.debug) console.debug(`[fit] frame (${why})`);
+        } else {
+            frameStats.skipped++;
+        }
     }
     if (cfg.slices > 1) msg.max_slice_nums = cfg.slices;
     session.sendChunk(msg);
     maybeReset();
+}
+
+// Why this chunk should carry a frame, or '' to send audio only.
+function frameReason() {
+    if (!cfg.frameGate || !sent) return 'always';
+    if (now() - sent.at >= GATE.keepaliveMs) return 'keepalive';
+    if (step !== sent.step) return 'step';
+    if (liveCodes.join(',') !== sent.codes) return 'tracker';
+    if (!tracker?.ready) return 'no tracker';
+    if (!poseLm || !sent.lm) return poseLm !== sent.lm ? 'person' : '';
+    if (step === 'recording' && Math.abs((turn?.absDeg ?? 0) - sent.deg) >= GATE.turnDeg) return 'turn';
+    return poseShift(poseLm, sent.lm) >= GATE.poseMove ? 'pose' : '';
+}
+
+// Mean shift of the main landmarks, relative to body height.
+function poseShift(a, b) {
+    let sum = 0;
+    for (const i of GATE_LM) sum += Math.hypot(a[i].x - b[i].x, a[i].y - b[i].y);
+    const h = Math.max(0.2, Math.max(a[27].y, a[28].y) - a[0].y);
+    return sum / GATE_LM.length / h;
 }
 
 // Scale the upright frame to at most SEND_MAX_H tall for the agent.
@@ -453,6 +505,7 @@ function endSession() {
     clearInterval(tickTimer);
     const s = session;
     session = null;
+    if (s) log(`session: ${Math.round((now() - t0) / 1000)}s, ${resets} resets, frames ${frameStats.sent} sent / ${frameStats.skipped} skipped`);
     s?.stop();
     releaseMedia();
 }
@@ -477,6 +530,7 @@ function loop(t) {
     }
     const obs = tracker.process(v, t);
     if (!obs || obs.rotated) return;   // the frame changed orientation under us; wait for the next one
+    poseLm = obs.lm;
     if (cfg.debug) {
         const a = obs.arms;
         const fmt = s => s ? `${s.abd.toFixed(0)}°/${s.elbow.toFixed(0)}°` : '—';
@@ -679,6 +733,12 @@ function showResult(blob, ext, lines, title) {
 function tick() {
     const e = elapsedSec();
     setChip(els.chipTime, `${Math.floor(e)}s / ${cfg.timeoutSec}s`, e > cfg.timeoutSec - 15 ? 'warn' : '');
+    if (session?.running && !agentLost) {
+        const audible = agentAudible();
+        if (audible !== els.chipAgent.classList.contains('speaking')) {
+            setChip(els.chipAgent, audible ? 'agent: speaking' : 'agent: listening', audible ? 'speaking' : '');
+        }
+    }
     maybeReset();
     // trackTurn() enforces this too, but only runs when the pose tracker is loaded.
     if (step === 'recording' && now() - recordStart > cfg.maxRecSec * 1000) { stopRecording('max_length'); return; }
@@ -731,6 +791,7 @@ els.startBtn.onclick = async () => {
     attempt = 1; resets = 0; lastSaid = ''; note = ''; kv = 0; agentLost = false;
     pendingReset = null; resetInFlight = false; lastResetAt = 0;
     candCodes = promptCodes = ''; liveCodes = []; lastFramingOkAt = -Infinity; lastFr = null;
+    poseLm = sent = null; frameStats = { sent: 0, skipped: 0 }; lastAudibleAt = -Infinity;
     els.error.classList.add('hidden');
     els.intro.classList.add('hidden');
     els.settings.classList.add('hidden');
@@ -755,7 +816,8 @@ els.startBtn.onclick = async () => {
         setBanner('Connecting to the assistant…');
         const s = session;
         // The cpp model's default listen bias (1.0) leaves it silent until someone speaks to it,
-        // and it often ignores speech from across the room; 0 makes it coach unprompted.
+        // and it often ignores speech from across the room. In a quiet room 0 still says nothing;
+        // −0.5 coaches unprompted, and −1 gets chatty and claims turns that never happened.
         const payload = { max_slice_nums: cfg.slices, use_tts: true, config: { listen_prob_scale: cfg.listenScale } };
         if (refAudio) payload.ref_audio_base64 = refAudio;
         await s.start(buildPrompt({ ...promptState(), step: 'positioning', resets: 0 }), payload, async () => {

@@ -66,9 +66,10 @@
       <input id="cfgResetKv" type="number" min="2000" max="8000" step="250" value="5500">
     </label>
     <label>Listen bias (lower = more talkative)
-      <input id="cfgListenScale" type="number" min="-2" max="2" step="0.25" value="0">
+      <input id="cfgListenScale" type="number" min="-2" max="2" step="0.25" value="-0.5">
     </label>
     <label class="check"><input id="cfgReset" type="checkbox" checked> Context resets (needs rebuilt cpp server)</label>
+    <label class="check"><input id="cfgFrameGate" type="checkbox" checked> Send frames only when the pose changes (saves context)</label>
     <label class="check"><input id="cfgHints" type="checkbox" checked> Send tracker findings to the agent</label>
     <label class="check"><input id="cfgGate" type="checkbox" checked> Agent start needs tracker OK</label>
     <label class="check"><input id="cfgPhrases" type="checkbox" checked> Phrase fallback for missing markers</label>
