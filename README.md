@@ -152,6 +152,8 @@ docker compose -f docker-compose.cpp.yml down  # C++ backend compose
 
 This demo also supports a **C++ inference backend** based on llama.cpp-omni. Use the Docker deployment section above as the authoritative setup path; inspect `docker-compose.cpp.yml` and `docker/Dockerfile.cpp-worker-backend` for startup details.
 
+Without Docker, `./omni.sh start` runs llama-omni-server, the worker and the gateway (on :8016) from local checkouts; see the script header. `omni.sh` is cpp-only: the fit-capture page (`/static/fit-capture/`) needs llama.cpp-omni's same-session `session.reset` and forced speech (`session.say`, documented in llama.cpp-omni `docs/omni-duplex-say.md`).
+
 ### Desktop App (Windows & macOS)
 
 Ready-to-use desktop installers are available for Windows and macOS. Download from [llama.cpp-omni Releases](https://github.com/tc-mb/llama.cpp-omni/releases/).
@@ -228,7 +230,7 @@ The gateway runs the retention and size cleanup once a day, starting a minute af
 
 ### llama.cpp backend logging and temp files
 
-The `cpp` stack's backend (`llama-omni-server`) is controlled by environment variables rather than `config.json`. `omni.sh` passes them through, for example `OMNI_LOG_VERBOSE=1 ./omni.sh start cpp`.
+The C++ backend (`llama-omni-server`) is controlled by environment variables rather than `config.json`. `omni.sh` passes them through, for example `OMNI_LOG_VERBOSE=1 ./omni.sh start`.
 
 | Variable | Default | Effect |
 |---|---|---|
