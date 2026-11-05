@@ -145,6 +145,24 @@ push 消息：`type` MUST 为 `input.append`。模型输入 MUST 位于 `input` 
 
 一条 push MUST 表示**一个时间片**：1 段音频 + 0..N 视频帧。
 
+### 4.1.1 强制说话（session.say，仅 cpp backend，full_duplex）
+
+`type` 为 `session.say`，参数在 `payload` 中。backend 在随后的 duplex 步骤里不再采样，而是把
+`text` 逐字作为 assistant 说出（每步约 `chars_per_step` 字符，经 TTS 输出），并像模型自己说的
+一样写入上下文。用途：应用决定开场白和结束语（fit-capture 中模型常常不主动开口、录制结束后
+又说个不停）。实现与原因见 llama.cpp-omni `docs/omni-duplex-say.md`。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `text` | string | MUST | 要说的文本；空串只应用 `mute_after` |
+| `chars_per_step` | int | MAY | 每个 1 s 步骤的字符数，缺省 12 |
+| `mute_after` | bool | MAY | 说完后每步强制 listen，直到下一个 say 或 `session.reset` |
+
+文本照常以 `response.output.delta` / `response.done` 下发。最后一段解码完后 backend 发送
+`{"type":"session.say.done","session_id":…,"muted":bool}`（此时音频可能仍在播放）。新的 say
+替换未说完的 say；`session.reset` 清除 say 和 mute 状态。步骤由 `input.append` 驱动，客户端
+MUST 在 say 期间继续推送音频。
+
 ### 4.2 Turn-Based 输入
 
 `input` 对象：

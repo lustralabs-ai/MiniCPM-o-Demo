@@ -10,7 +10,38 @@
  * Markers are single emoji at the start of a reply. The cpp backend strips
  * emoji before TTS (OMNI_TTS_STRIP_EMOJI). Everything here is English: Chinese
  * tags tend to switch the model into Chinese.
+ *
+ * The opening and closing lines are spoken verbatim through session.say (forced
+ * speech, see fit-capture.js) instead of being left to the model, which often
+ * failed to start the conversation and kept talking after the capture.
  */
+
+// Spoken at session start. Each greets and gives step 1, matching STEP_TEXT.positioning.
+export const OPENING_LINES = [
+    "Hi, I'm Fit. Please step back until I can see you from head to toe.",
+    "Hello! Let's get started. Step back until your whole body is in view.",
+    "Hi there! First, step back so I can see all of you, head to feet.",
+    "Hi, I'm Fit, and I'll guide you. Start by stepping back until you're fully in view.",
+    "Hello! To begin, move back until I can see your head and your feet.",
+    "Hi! Let's record your video. Please step back until your whole body fits in the picture.",
+    "Hey, I'm Fit. Step back a little at a time until I can see you head to toe.",
+];
+
+// Spoken when the recording is saved; the model is muted afterwards.
+export const CLOSING_LINES = [
+    "That's it, all done. Thank you!",
+    "Perfect, your video is saved. Thanks!",
+    "Great job, we're all done. Thank you!",
+    "All done, thanks for your help!",
+];
+
+// Spoken when the time limit ends the session without a complete recording.
+export const FAILED_LINES = [
+    "Sorry, we ran out of time. Press Start to try again.",
+    "Time's up, sorry. You can press Start to have another go.",
+];
+
+export const pickLine = lines => lines[Math.floor(Math.random() * lines.length)];
 
 export const MARKERS = {
     start:   { emoji: '🎬', alt: ['🎥'], desc: 'the user is in position with arms out, and you are telling them to start turning now' },
@@ -109,7 +140,8 @@ export function buildPrompt(st) {
         // Quoting the agent's last line here made it repeat that line verbatim after the reset.
         lines.push('The conversation is already under way; do not greet or introduce yourself again, and do not repeat earlier instructions.');
     } else {
-        lines.push('Start by greeting them in one short sentence and giving the first instruction.');
+        // The page has just spoken an OPENING_LINES greeting as the agent (session.say).
+        lines.push('You have already greeted the user and asked them to step back; do not greet them again. Speak when they need help.');
     }
     return lines.join('\n');
 }

@@ -89,6 +89,8 @@ export class RealtimeSession {
     onProtocolEvent(entry) {}
     /** session.reset.done: backend cleared the LLM context and re-prefilled the system prompt */
     onSessionReset(msg) {}
+    /** session.say.done: the last words of a say() were decoded (audio may still be playing) */
+    onSayDone(msg) {}
 
     // ==== Protocol event logging ====
     _logProtoEvent(dir, type, summary, full) {
@@ -286,6 +288,22 @@ export class RealtimeSession {
         return true;
     }
 
+    /**
+     * Forced speech (cpp backend): speak `text` verbatim as the assistant, about
+     * opts.charsPerStep characters per 1 s step. With opts.muteAfter the model then
+     * listens until the next say() or reset. The reply is session.say.done -> onSayDone.
+     * See llama.cpp-omni docs/omni-duplex-say.md.
+     */
+    say(text, { charsPerStep, muteAfter = false } = {}) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+        const payload = { text, mute_after: muteAfter };
+        if (charsPerStep) payload.chars_per_step = charsPerStep;
+        const msg = { type: 'session.say', payload };
+        this.ws.send(JSON.stringify(msg));
+        this._logProtoEvent('client', 'session.say', `"${text.slice(0, 30)}" mute=${muteAfter}`, msg);
+        return true;
+    }
+
     toggleForceListen() {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.forceListenActive = !this.forceListenActive;
@@ -406,6 +424,11 @@ export class RealtimeSession {
                     `ok=${msg.ok} kv=${msg.metrics?.kv_cache_length}`, msg);
                 this._lastKvCacheLength = msg.metrics?.kv_cache_length || 0;
                 this.onSessionReset(msg);
+                break;
+
+            case 'session.say.done':
+                this._logProtoEvent('server', 'session.say.done', `muted=${msg.muted}`, msg);
+                this.onSayDone(msg);
                 break;
 
             case 'session.closed':

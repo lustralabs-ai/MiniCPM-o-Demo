@@ -12,11 +12,19 @@
  * in the same session (session.reset) with a fresh prompt from prompts.js at each
  * step change, on stable tracker findings, and when the KV passes a threshold.
  * Resets wait until the model is listening.
+ *
+ * Forced speech: the opening and closing lines are not left to the model. In duplex
+ * mode it often waited silently for the user to speak first, and after the capture
+ * it kept talking. The page instead sends session.say (cpp backend, see llama.cpp-omni
+ * docs/omni-duplex-say.md) with a line from prompts.js: the backend speaks it verbatim
+ * and writes it into the context as the assistant's own words. The closing line uses
+ * mute_after, so the model only listens afterwards; the page ends the session once
+ * session.say.done has arrived and the audio has played out.
  */
 
 import { RealtimeSession } from '/static/duplex/lib/realtime-session.js';
 import { arrayBufferToBase64 } from '/static/duplex/lib/duplex-utils.js';
-import { buildPrompt, findMarkers, findPhraseMarkers, stripEmoji } from './prompts.js';
+import { buildPrompt, findMarkers, findPhraseMarkers, stripEmoji, pickLine, OPENING_LINES, CLOSING_LINES, FAILED_LINES } from './prompts.js';
 
 const SAMPLE_RATE_IN = 16000;
 const SEND_MAX_H = 640;          // agent frames are scaled down to at most this height
@@ -38,6 +46,8 @@ const FLOW = {
     forceResetOverKv: 1500,  // reset even mid-speech once KV passes threshold + this
     lingerMaxMs: 15000,      // longest wait for the closing sentence to be spoken
     speechHoldMs: 700,       // agent counts as speaking this long after playback runs dry
+    sayTimeoutMs: 20000,     // give up waiting for session.say.done
+    sayTailMs: 1500,         // after say.done, the Talker may still owe this much audio
 };
 
 // Frame gating: a frame costs ~64 KV tokens, so a still scene only gets a keepalive frame.
@@ -109,17 +119,32 @@ function saveSettings(s) {
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (_) {}
 }
 
+// The label of the last camera used. Device ids can change when a camera is replugged
+// (e.g. a phone in webcam mode), so a saved device is found again by its label.
+const CAMERA_LABEL_KEY = 'fitCapture.cameraLabel';
+
+async function videoInputs() {
+    return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+}
+
 async function listCameras() {
     try {
-        const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+        const devs = await videoInputs();
         if (!devs.length || !devs.some(d => d.label)) return;   // no labels until camera permission is granted
         const sel = $('cfgCamera');
-        const cur = sel.value;
+        let cur = sel.value;
+        const savedLabel = localStorage.getItem(CAMERA_LABEL_KEY);
+        if (cur.startsWith('device:') && !devs.some(d => `device:${d.deviceId}` === cur)) {
+            const same = devs.find(d => d.label && d.label === savedLabel);
+            if (same) cur = `device:${same.deviceId}`;
+        }
         [...sel.options].filter(o => o.value.startsWith('device:')).forEach(o => o.remove());
         devs.forEach((d, i) => sel.add(new Option(d.label || `Camera ${i + 1}`, `device:${d.deviceId}`)));
         sel.value = [...sel.options].some(o => o.value === cur) ? cur : sel.options[0].value;
     } catch (_) {}
 }
+
+navigator.mediaDevices?.addEventListener?.('devicechange', listCameras);
 
 $('cfgCamera').addEventListener('change', e => {
     if (e.target.value === 'facing:user') $('cfgMirror').checked = true;
@@ -134,7 +159,7 @@ let session = null, PT = null, tracker = null, turn = null;
 let camStream = null, micStream = null, micCtx = null, captureNode = null, sinkNode = null;
 let rafId = 0, tickTimer = 0, lingerTimer = 0;
 let t0 = 0, attempt = 1, resets = 0, note = '';
-let lingering = false, closingSpoke = false, closingDone = false;
+let lingering = false, closingDone = false, closingDoneAt = 0, sayInFlight = false, saySentAt = 0;
 let speaking = false, lastAudibleAt = -Infinity, kv = 0, agentLost = false, refAudio = null;
 let pendingReset = null, resetInFlight = false, resetSentAt = 0, lastResetAt = 0;
 let candCodes = '', candSince = 0, promptCodes = '', liveCodes = [];
@@ -188,6 +213,7 @@ function requestReset(reason) {
 
 function maybeReset() {
     if (!pendingReset || !session?.running) return;
+    if (sayBusy()) return;    // a reset would drop the rest of the forced line
     if (resetInFlight) {
         if (now() - resetSentAt < FLOW.resetTimeoutMs) return;
         log('⚠ session.reset.done timed out');
@@ -207,6 +233,23 @@ function maybeReset() {
     pendingReset = null;
     resetInFlight = true;
     resetSentAt = lastResetAt = now();
+}
+
+// Speak a fixed line as the agent (session.say).
+function say(text, opts) {
+    if (!session?.say(text, opts)) return false;
+    log(`→ say "${text}"${opts?.muteAfter ? ' (mute after)' : ''}`);
+    sayInFlight = true;
+    saySentAt = now();
+    return true;
+}
+
+function sayBusy() {
+    if (sayInFlight && now() - saySentAt > FLOW.sayTimeoutMs) {
+        log('⚠ session.say.done timed out');
+        sayInFlight = false;
+    }
+    return sayInFlight;
 }
 
 // The model switches to listen while the Talker may still owe several seconds of audio
@@ -332,7 +375,6 @@ function createSession() {
 
     s.onSpeakStart = text => {
         speaking = true;
-        if (lingering && !pendingReset && !resetInFlight) closingSpoke = true;
         fired = new Set();
         setChip(els.chipAgent, 'agent: speaking', 'speaking');
         handleAgentText(text);
@@ -345,7 +387,6 @@ function createSession() {
     s.onListenResult = () => {
         // The LLM is listening again; the chip and pending resets follow playback (tick()).
         speaking = false;
-        if (closingSpoke) closingDone = true;   // stop the mic so the model does not carry on
         maybeReset();
     };
 
@@ -354,6 +395,17 @@ function createSession() {
         kv = data.kvCacheLength;
         setChip(els.chipKv, `kv ${kv}`, kv >= cfg.resetKv ? 'warn' : '');
         if (cfg.reset && kv >= cfg.resetKv && !pendingReset && !resetInFlight) requestReset('kv');
+    };
+
+    s.onSayDone = msg => {
+        sayInFlight = false;
+        log(`← say.done muted=${msg.muted}`);
+        if (lingering) {
+            // The closing line is decoded and the model is muted: stop the mic, let the audio play out.
+            closingDone = true;
+            closingDoneAt = now();
+        }
+        maybeReset();
     };
 
     s.onSessionReset = msg => {
@@ -404,14 +456,24 @@ async function startCamera() {
         camStream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
     } catch (e) {
         if (!video.deviceId) throw e;
-        log(`saved camera unavailable (${e.name}); using default`);
-        delete video.deviceId;
+        const savedLabel = localStorage.getItem(CAMERA_LABEL_KEY);
+        const same = (await videoInputs()).find(d => d.label && d.label === savedLabel);
+        if (same && same.deviceId !== video.deviceId.exact) {
+            log(`saved camera id gone (${e.name}); using "${same.label}"`);
+            video.deviceId = { exact: same.deviceId };
+        } else {
+            log(`saved camera unavailable (${e.name}); using default`);
+            delete video.deviceId;
+        }
         camStream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
     }
     els.video.srcObject = camStream;
     await els.video.play();
-    const st = camStream.getVideoTracks()[0]?.getSettings() || {};
-    log(`camera ${st.width}x${st.height} facing=${st.facingMode || '?'}`);
+    const track = camStream.getVideoTracks()[0];
+    const st = track?.getSettings() || {};
+    if (track?.label) localStorage.setItem(CAMERA_LABEL_KEY, track.label);
+    log(`camera "${track?.label}" ${st.width}x${st.height} facing=${st.facingMode || '?'}`);
+    videoInputs().then(devs => log(`cameras: ${devs.map(d => `"${d.label}"`).join(', ')}`)).catch(() => {});
     els.view.classList.toggle('mirror', cfg.mirror);
     listCameras();
 }
@@ -696,19 +758,21 @@ function finishRecording() {
         `Attempts: ${attempt} · context resets: ${resets}`,
         `Format: ${ext.toUpperCase()}, ${(blob.size / 1048576).toFixed(1)} MB`,
     ], failed ? 'Time is up' : 'Thank you!');
-    goStep(failed ? 'failed' : 'done');
-    linger();
+    goStep(failed ? 'failed' : 'done', { reset: false });
+    linger(failed);
 }
 
-// Let the agent say its closing sentence, then end the session.
-function linger() {
+// Speak a fixed closing line, mute the model, and end the session once it has played.
+function linger(failed) {
     camStream?.getTracks().forEach(t => t.stop());
     camStream = null;
     cancelAnimationFrame(rafId);
     clearTimeout(lingerTimer);
-    // tick() ends the session once the closing reply has played; this is the backstop.
-    lingering = true; closingSpoke = closingDone = false;
-    lingerTimer = setTimeout(endSession, session?.running && cfg.reset ? FLOW.lingerMaxMs : 0);
+    pendingReset = null;    // the context no longer matters, and a reset would drop the line
+    lingering = true; closingDone = false;
+    const spoke = session?.running && say(pickLine(failed ? FAILED_LINES : CLOSING_LINES), { muteAfter: true });
+    // tick() ends the session once the closing line has played; this is the backstop.
+    lingerTimer = setTimeout(endSession, spoke ? FLOW.lingerMaxMs : 0);
 }
 
 function showResult(blob, ext, lines, title) {
@@ -744,7 +808,7 @@ function tick() {
         }
     }
     maybeReset();
-    if (closingDone && !agentAudible()) { endSession(); return; }
+    if (closingDone && now() - closingDoneAt > FLOW.sayTailMs && !agentAudible()) { endSession(); return; }
     // trackTurn() enforces this too, but only runs when the pose tracker is loaded.
     if (step === 'recording' && now() - recordStart > cfg.maxRecSec * 1000) { stopRecording('max_length'); return; }
     if (!ACTIVE_STEPS.has(step) || e < cfg.timeoutSec) return;
@@ -752,8 +816,8 @@ function tick() {
     if (step === 'recording') { stopRecording('timeout'); return; }
     els.countdown.classList.add('hidden');
     showResult(null, '', [`No complete recording within ${cfg.timeoutSec} s.`, `Attempts: ${attempt}`], 'Time is up');
-    goStep('failed');
-    linger();
+    goStep('failed', { reset: false });
+    linger(true);
 }
 
 // ── Buttons ─────────────────────────────────────────────────────────────────
@@ -794,7 +858,7 @@ els.startBtn.onclick = async () => {
 
     step = 'connecting';
     attempt = 1; resets = 0; note = '';
-    lingering = closingSpoke = closingDone = false; kv = 0; agentLost = false;
+    lingering = closingDone = sayInFlight = false; kv = 0; agentLost = false;
     pendingReset = null; resetInFlight = false; lastResetAt = 0;
     candCodes = promptCodes = ''; liveCodes = []; lastFramingOkAt = -Infinity; lastFr = null;
     poseLm = sent = null; frameStats = { sent: 0, skipped: 0 }; lastAudibleAt = -Infinity;
@@ -834,11 +898,18 @@ els.startBtn.onclick = async () => {
         step = 'positioning';
         setChip(els.chipStep, step);
         setBanner('Step back until your whole body is in view');
+        // Open with a fixed line rather than waiting for the model to decide to speak.
+        say(pickLine(OPENING_LINES));
         tickTimer = setInterval(tick, 500);
         log(`session ${s.sessionId} driver=${cfg.driver} tracker=${tracker?.ready ? 'on' : 'off'}`);
     } catch (err) {
         console.error(err);
-        if (step !== 'idle') cancelAll('Could not start: ' + (err.message || err.name));
+        const hint = err.name === 'NotReadableError' ? ' (is another app or tab using the camera?)' : '';
+        if (err.name === 'NotFoundError' && camStream && !micStream) {
+            // A phone in webcam mode sends video only; the mic has to come from elsewhere.
+            err = new Error('No microphone found. Connect a microphone or headset; a phone used as a webcam does not send audio.');
+        }
+        if (step !== 'idle') cancelAll('Could not start: ' + (err.message || err.name) + hint);
     }
 };
 

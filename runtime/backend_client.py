@@ -97,6 +97,18 @@ class RemoteBackendSession:
             "payload": dict(payload or {}),
         }))
 
+    async def say(self, payload: Optional[Dict[str, Any]] = None) -> None:
+        """Ask the backend to speak ``payload["text"]`` verbatim (duplex forced speech).
+
+        The reply (``session.say.done``) arrives on the normal pull stream.
+        """
+        if self._ws is None or self._closed:
+            raise RuntimeError("backend session is not active")
+        await self._ws.send(json.dumps({
+            "type": "session.say",
+            "payload": dict(payload or {}),
+        }))
+
     async def pull(self) -> Dict[str, Any]:
         if self._ws is None:
             raise RuntimeError("backend session WebSocket is not connected")

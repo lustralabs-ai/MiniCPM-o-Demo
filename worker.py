@@ -247,6 +247,12 @@ async def _handle_remote_backend_runtime_ws(
                     await runtime.reset(msg.get("payload") or {})
                     continue
 
+                if msg_type == "session.say":
+                    # Forced speech (cpp backend): speak payload.text verbatim as the assistant;
+                    # backend replies session.say.done. See llama.cpp-omni docs/omni-duplex-say.md.
+                    await runtime.say(msg.get("payload") or {})
+                    continue
+
                 if msg_type == "session.close":
                     close_event = await runtime.unary("close", {"reason": str(msg.get("reason") or "client_closed")})
                     backend_closed = True

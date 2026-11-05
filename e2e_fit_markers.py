@@ -8,6 +8,8 @@
 #   --listen X: init config.listen_prob_scale (the page's 'Listen bias'; omit for the server default)
 #   --gate: send a frame only when the view changes or every 4 s, like the page's frame gating
 #   --no-frames-after-reset: audio only after --reset-at, as the page does once the camera stops (done/failed)
+#   --say-open: speak OPENING_LINES[0] via session.say right after session.created (forced speech)
+#   --close-at S: at S seconds send session.say(CLOSING_LINES[0], mute_after); text after say.done is reported
 #
 # The prompt is built by static/fit-capture/prompts.js (via node) so this tests what the page sends.
 import asyncio, base64, io, json, subprocess, sys, time
@@ -22,6 +24,7 @@ wav = opt("--wav", ""); wav_at = opt("--at", 5.0); out = opt("--out", "")
 reset_at = opt("--reset-at", -1.0); reset_step = opt("--reset-step", "recording")
 view_secs = opt("--view-secs", 5); slices = opt("--slices", 1)
 listen = opt("--listen", -99.0); gate = "--gate" in args; blind_after_reset = "--no-frames-after-reset" in args
+say_open = "--say-open" in args; close_at = opt("--close-at", -1.0)
 POSE = "/home/carl/lustra/drape/apps/tester-web/public/pose-guides"
 MARKERS = {"🎬": "start", "🎥": "start", "✅": "done", "✔": "done", "🔄": "restart", "🔁": "restart", "🛑": "stop", "⛔": "stop"}
 
@@ -31,6 +34,12 @@ def prompt_for(step, resets=0, turn=None):
           "turnDeg": turn, "attempt": 1, "elapsedSec": 10, "timeoutSec": 120, "resets": resets, "lastSaid": ""}
     js = ("import { buildPrompt } from '/home/carl/lustra/MiniCPM_app/static/fit-capture/prompts.js';"
           f"process.stdout.write(buildPrompt({json.dumps(st)}));")
+    return subprocess.run(["node", "--input-type=module", "-e", js], capture_output=True, text=True, check=True).stdout
+
+
+def line(name):
+    js = ("import * as p from '/home/carl/lustra/MiniCPM_app/static/fit-capture/prompts.js';"
+          f"process.stdout.write(p.{name}[0]);")
     return subprocess.run(["node", "--input-type=module", "-e", js], capture_output=True, text=True, check=True).stdout
 
 
@@ -60,6 +69,7 @@ async def main():
     payload = {"system_prompt": prompt, "max_slice_nums": slices, "ref_audio_base64": base64.b64encode(ref.tobytes()).decode()}
     if listen > -99: payload["config"] = {"listen_prob_scale": listen}
     pcm = []; utter = []; cur = ""; found = []; kv = [0]; nframes = 0; last_view = None; last_frame_at = -99
+    muted_at = [None]; after_mute = []; say_done = []
     async with websockets.connect(f"ws://127.0.0.1:{port}/v1/realtime?mode=video", max_size=None) as ws:
         t0 = time.monotonic(); created = asyncio.Event()
 
@@ -74,17 +84,27 @@ async def main():
                 if k == "audio": pcm.append(np.frombuffer(base64.b64decode(m["audio"]), np.float32))
                 if k == "text":
                     cur += m["text"]
+                    if muted_at[0] is not None: after_mute.append(m["text"])
                     for ch in m["text"]:
                         if ch in MARKERS: found.append((round(el, 1), MARKERS[ch])); print(f"{el:6.1f} ★ MARKER {ch} {MARKERS[ch]}")
                 if k == "listen" and cur:
                     print(f"{el:6.1f} AGENT: {cur!r}"); utter.append(cur); cur = ""
+                if t == "session.say.done":
+                    say_done.append(round(el, 1)); print(f"{el:6.1f} session.say.done muted={m.get('muted')}")
+                    if m.get("muted"): muted_at[0] = el
                 if t in ("session.reset.done", "session.closed", "error"):
                     print(f"{el:6.1f} {t} {json.dumps({x: m.get(x) for x in ('ok', 'reason', 'error', 'metrics') if x in m})}")
 
         r = asyncio.create_task(reader())
         await asyncio.wait_for(created.wait(), 120)
+        if say_open:
+            await ws.send(json.dumps({"type": "session.say", "payload": {"text": line("OPENING_LINES")}}))
+            print(f"{time.monotonic() - t0:6.1f} → session.say (opening)")
         ts = time.monotonic()
         for n in range(secs):
+            if 0 <= close_at <= n < close_at + 1:
+                await ws.send(json.dumps({"type": "session.say", "payload": {"text": line("CLOSING_LINES"), "mute_after": True}}))
+                print(f"{time.monotonic() - t0:6.1f} → session.say (closing, mute_after)")
             if 0 <= reset_at <= n < reset_at + 1:
                 await ws.send(json.dumps({"type": "session.reset", "payload": {"system_prompt": prompt_for(reset_step, resets=1, turn=0)}}))
                 print(f"{time.monotonic() - t0:6.1f} → session.reset ({reset_step})")
@@ -101,6 +121,8 @@ async def main():
         if cur: print("AGENT (open):", repr(cur)); utter.append(cur)
         await ws.send(json.dumps({"type": "session.close"})); await asyncio.sleep(1); r.cancel()
     print("MARKERS", found)
+    if say_open or close_at >= 0:
+        print("SAY_DONE", say_done, "TEXT_AFTER_MUTE", repr("".join(after_mute)))
     print("UTTERANCES", json.dumps(utter, ensure_ascii=False))
     print(f"SUMMARY listen={listen if listen > -99 else 'default'} gate={gate} secs={secs} replies={len(utter)} "
           f"per_min={len(utter) * 60 / secs:.1f} frames={nframes} kv_end={kv[0]} kv_per_min={kv[0] * 60 / secs:.0f} "
