@@ -47,6 +47,14 @@ button:disabled{opacity:.5;cursor:default}
 .buttons{display:flex;flex:none;padding-bottom:env(safe-area-inset-bottom);background:#000}
 .buttons>button{border-radius:0;padding:14px}
 
+/* Start screen: camera preview with the Start button over it. */
+.preview{position:relative;min-height:220px;border-radius:14px;overflow:hidden;background:#000}
+.preview video{display:block;width:100%;max-height:60dvh;object-fit:contain}
+.preview.mirror video{transform:scaleX(-1)}
+.previewnote{position:absolute;left:0;right:0;top:0;margin:0;padding:10px 14px;text-align:center;font-size:14px;color:var(--muted)}
+.previewnote.warn{background:rgba(0,0,0,.65);color:var(--warn);font-weight:600}
+.preview #startBtn{position:absolute;left:12px;right:12px;bottom:12px;width:auto;box-shadow:0 2px 12px rgba(0,0,0,.5)}
+
 video#playback{display:block;width:auto;max-width:100%;max-height:clamp(180px,calc(100dvh - 400px),900px);margin:10px auto 0;border-radius:12px;background:#000}
 #stats{white-space:pre-line;margin:10px 0}
 .offscreen{position:fixed;left:-9999px;top:0;width:1px;height:1px;pointer-events:none}

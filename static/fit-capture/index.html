@@ -14,7 +14,7 @@
 <section id="intro" class="card">
   <strong>How it works</strong>
   <ol>
-    <li>Put the phone on a stand, or hand it to a friend, and press Start.</li>
+    <li>Put the phone on a stand, or hand it to a friend. Check the picture below, then press Start.</li>
     <li>Step back until your whole body, head to feet, is in view.</li>
     <li>Hold both arms out straight, a little away from your body, like a Christmas tree.</li>
     <li>Turn slowly in place through one full circle and finish facing the camera.</li>
@@ -22,6 +22,13 @@
   <p class="muted" style="margin:8px 0 0">The assistant talks you through it, and you can ask it questions at any time. Recording stops on its own.</p>
   <p id="error" class="error hidden"></p>
 </section>
+
+<!-- Live camera before Start, so the user can frame the shot and grant camera/mic access first. -->
+<div id="preview" class="preview">
+  <video id="previewVideo" playsinline muted autoplay></video>
+  <p id="previewNote" class="previewnote">Starting camera…</p>
+  <button id="startBtn" class="primary">Start</button>
+</div>
 
 <details id="settings" class="card">
   <summary>Settings</summary>
@@ -40,8 +47,8 @@
     </label>
     <label>Flow driven by
       <select id="cfgDriver">
-        <option value="agent">Agent (emoji markers)</option>
         <option value="tracker">Pose tracker</option>
+        <option value="agent">Agent (emoji markers)</option>
       </select>
     </label>
     <label>Fail after (s)
@@ -66,7 +73,7 @@
       <input id="cfgResetKv" type="number" min="2000" max="8000" step="250" value="5500">
     </label>
     <label>Listen bias (lower = more talkative)
-      <input id="cfgListenScale" type="number" min="-2" max="2" step="0.25" value="-0.5">
+      <input id="cfgListenScale" type="number" min="-2" max="2" step="0.25" value="0">
     </label>
     <label class="check"><input id="cfgReset" type="checkbox" checked> Context resets (needs rebuilt cpp server)</label>
     <label class="check"><input id="cfgFrameGate" type="checkbox" checked> Send frames only when the pose changes (saves context)</label>
@@ -77,8 +84,6 @@
     <label class="check"><input id="cfgDebug" type="checkbox"> Debug log</label>
   </div>
 </details>
-
-<button id="startBtn" class="primary">Start</button>
 
 <section id="capture" class="hidden">
   <div class="stage" id="stage">
