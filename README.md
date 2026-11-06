@@ -1,3 +1,7 @@
+Note: To run serve this using tailscale on your tailscale network:
+
+sudo tailscale serve --bg 8016  # for the server started up with omni.sh
+
 # MiniCPM-o 4.5 PyTorch Simple Demo System
 
 [中文简介](README_zh.md) | [Documentation](https://minicpmo45.modelbest.cn/docs/en/) | [Realtime API Docs](https://minicpmo45.modelbest.cn/docs/en/realtime-api/overview/)
