@@ -14,6 +14,9 @@
 # history. "cpp" is still accepted after the command (./omni.sh start cpp).
 #
 # Paths and options can be overridden with the environment variables below.
+#
+# Session recording (data/sessions) is off unless OMNI_RECORDING=1: Drape relays a tester's voice
+# and camera frames here and refuses to connect unless /health reports "recording": false.
 
 set -uo pipefail
 
@@ -28,6 +31,7 @@ GGUF_MODEL="${GGUF_MODEL:-$HOME/models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q8_0.ggu
 CPP_CTX="${CPP_CTX:-8192}"
 DUPLEX_MAX_DURATION="${DUPLEX_MAX_DURATION:-0}"   # seconds, 0 = unlimited
 BACKEND_TIMEOUT="${BACKEND_TIMEOUT:-300}"
+OMNI_RECORDING="${OMNI_RECORDING:-0}"   # 1 = keep each session's audio and video in data/sessions
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { echo "[$(date +%H:%M:%S)] $*"; }
@@ -83,6 +87,7 @@ component_env() {
         backend) echo "MTMD_BACKEND_DEVICE=ROCm0 GGML_CUDA_DISABLE_GRAPHS=${GGML_CUDA_DISABLE_GRAPHS:-1}" \
                       "ROCBLAS_USE_HIPBLASLT=${ROCBLAS_USE_HIPBLASLT:-1}" \
                       "OMNI_T2W_ASSET_DIR=$HF_MODEL/assets/token2wav OMNI_T2W_PYTHON=$PYTHON" ;;
+        gateway) echo "OMNI_RECORDING=$OMNI_RECORDING" ;;
     esac
 }
 
@@ -238,6 +243,9 @@ cmd_status() {
         fi
         printf '  %-8s :%-6s pid %-8s %s\n' "$comp" "$port" "$pid" "$state"
     done
+    # A gateway started before OMNI_RECORDING existed reports nothing, and records.
+    local rec; rec="$(curl -s -m 2 "http://127.0.0.1:$GW_PORT/health" | grep -o '"recording":[a-z]*' | cut -d: -f2)"
+    echo "  recording: ${rec:-unknown (gateway down or too old to say; assume on)}"
 }
 
 cmd_logs() {

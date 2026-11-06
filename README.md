@@ -1,206 +1,156 @@
-Note: To run serve this using tailscale on your tailscale network:
+# MiniCPM-o demo for Lustra: the fit-capture voice guide
 
-sudo tailscale serve --bg 8016  # for the server started up with omni.sh
+This is the lustra fork of the [MiniCPM-o 4.5 demo](https://github.com/OpenBMB/MiniCPM-o) (upstream
+[docs](https://minicpmo45.modelbest.cn/docs/en/), [Realtime API](https://minicpmo45.modelbest.cn/docs/en/realtime-api/overview/),
+[中文简介](README_zh.md)). It runs the MiniCPM-o 4.5 omni model on the llama.cpp-omni backend.
+Lustra uses it for one job: **a voice guide that talks a person through recording a turn video**
+for clothing-size measurement. It sees the camera at about one frame a second, hears the room and
+speaks back.
 
-# MiniCPM-o 4.5 PyTorch Simple Demo System
+The guide is used in two places:
 
-[中文简介](README_zh.md) | [Documentation](https://minicpmo45.modelbest.cn/docs/en/) | [Realtime API Docs](https://minicpmo45.modelbest.cn/docs/en/realtime-api/overview/)
+- **Standalone**, at `/fit-capture/` on the gateway. This is the prototype the flow was developed
+  on. It records, plays back and downloads the video in the browser.
+- **From Drape** (`~/lustra/drape`), where the same flow is part of tester enrolment. Drape's api
+  relays the browser's session to this gateway; see [Using it from Drape](#using-it-from-drape).
 
-[Ready-to-use Demo Website](https://minicpmo45.modelbest.cn/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
+Contents: [Running it](#running-it) · [Using it from Drape](#using-it-from-drape) ·
+[The fit-capture page](#the-fit-capture-page) · [Privacy: what is kept on disk](#privacy-what-is-kept-on-disk) ·
+[Configuration](#configuration) · [Project structure](#project-structure)
 
-This demo system is officially provided by the `MiniCPM-o 4.5` model training team. It uses a PyTorch + CUDA inference backend, combined with a lightweight frontend-backend design, aiming to demonstrate the full audio-video omnimodal full-duplex capabilities of MiniCPM-o 4.5 in a transparent, concise, and lossless manner.
+## Running it
 
-## About MiniCPM-o 4.5
-
-MiniCPM-o 4.5 is the latest and most capable model in the MiniCPM-o series. The model is built in an end-to-end fashion based on SigLip2, Whisper-medium, CosyVoice2, and Qwen3-8B with a total of 9B parameters. It exhibits a significant performance improvement, and introduces new features for full-duplex multimodal live streaming. Notable features of MiniCPM-o 4.5 include:
-
-- 🔥 **Leading Visual Capability.** MiniCPM-o 4.5 achieves an average score of 77.6 on OpenCompass, a comprehensive evaluation of 8 popular benchmarks. With only 9B parameters, it surpasses widely used proprietary models like GPT-4o, Gemini 2.0 Pro, and approaches Gemini 2.5 Flash for vision-language capabilities. It supports instruct and thinking modes in a single model, better covering efficiency and performance trade-offs in different user scenarios.
-
-- 🎙 **Strong Speech Capability.** MiniCPM-o 4.5 supports bilingual real-time speech conversation with configurable voices in English and Chinese. It features more natural, expressive and stable speech conversation. The model also allows for fun features such as voice cloning and role play via a simple reference audio clip, where the cloning performance surpasses strong TTS tools such as CosyVoice2.
-
-- 🎬 **New Full-Duplex and Proactive Multimodal Live Streaming Capability.** As a new feature, MiniCPM-o 4.5 can process real-time, continuous video and audio input streams simultaneously while generating concurrent text and speech output streams in an end-to-end fashion, without mutual blocking. This allows MiniCPM-o 4.5 to see, listen, and speak simultaneously, creating a fluid, real-time omnimodal conversation experience. Beyond reactive responses, the model can also perform proactive interaction, such as initiating reminders or comments based on its continuous understanding of the live scene.
-
-- 💪 **Strong OCR Capability, Efficiency and Others.** Advancing popular visual capabilities from MiniCPM-V series, MiniCPM-o 4.5 can process high-resolution images (up to 1.8 million pixels) and high-FPS videos (up to 10fps) in any aspect ratio efficiently. It achieves state-of-the-art performance for end-to-end English document parsing on OmniDocBench, outperforming proprietary models such as Gemini-3 Flash and GPT-5, and specialized tools such as DeepSeek-OCR 2. It also features trustworthy behaviors, matching Gemini 2.5 Flash on MMHal-Bench, and supports multilingual capabilities on more than 30 languages.
-
-- 💫 **Easy Usage.** MiniCPM-o 4.5 can be easily used in various ways: Basic usage, recommended for 100% precision: PyTorch inference with Nvidia GPU. Other end-side adaptation includes (1) llama.cpp and Ollama support for efficient CPU inference on local devices, (2) int4 and GGUF format quantized models in 16 sizes, (3) vLLM and SGLang support for high-throughput and memory-efficient inference, (4) FlagOS support for the unified multi-chip backend plugin. We also open-sourced web demos which enable the full-duplex multimodal live streaming experience on local devices such as GPUs, PCs (e.g., on a MacBook).
-
-<details>
-<summary><b>Model Architecture</b></summary>
-
-- **End-to-end Omni-modal Architecture.** The modality encoders/decoders and LLM are densely connected via hidden states in an end-to-end fashion. This enables better information flow and control, and also facilitates full exploitation of rich multimodal knowledge during training.
-
-- **Full-Duplex Omni-modal Live Streaming Mechanism.** (1) We turn the offline modality encoder/decoders into online and full-duplex ones for streaming inputs/outputs. The speech token decoder models text and speech tokens in an interleaved fashion to support full-duplex speech generation (i.e., sync timely with new input). This also facilitates more stable long speech generation (e.g., > 1min). (2) We sync all the input and output streams on timeline in milliseconds, which are jointly modeled by a time-division multiplexing (TDM) mechanism for omni-modality streaming processing in the LLM backbone. It divides parallel omni-modality streams into sequential info groups within small periodic time slices.
-
-- **Proactive Interaction Mechanism.** The LLM continuously monitors the input video and audio streams, and decides at a frequency of 1Hz to speak or not. This high decision-making frequency together with full-duplex nature are crucial to enable the proactive interaction capability.
-
-- **Configurable Speech Modeling Design.** We inherit the multimodal system prompt design of MiniCPM-o 2.6, which includes a traditional text system prompt, and a new audio system prompt to determine the assistant voice. This enables cloning new voices and role play in inference time for speech conversation.
-
-</details>
-
----
-
-| Mode | Features | I/O Modalities | Paradigm
-|------|----------|------|------
-| **Turn-based Chat** | Low-latency streaming interaction; button-triggered responses; supports offline video/audio understanding and analysis; high response accuracy; strong basic capabilities | Audio + Text + Video input, Audio + Text output | Turn-based
-| **Omnimodal Full-Duplex** | Real-time omnimodal full-duplex interaction; visual and voice input with simultaneous voice output; model autonomously decides when to speak; powerful cutting-edge capabilities | Vision + Audio input, Text + Voice output | Full-duplex
-| **Audio Full-Duplex** | Real-time audio full-duplex interaction; voice input and voice output happen simultaneously; model autonomously decides when to speak; powerful cutting-edge capabilities | Audio input, Text + Voice output | Full-duplex
-
-The 3 currently supported modes share a single model instance with millisecond-level hot-switching (< 0.1ms).
-
-**Additional features:**
-
-- Customizable system prompts
-- Customizable reference audio
-- Simple and readable codebase for continual development
-- Serve as API backend for third-party applications
-
-![Demo Preview](assets/images/demo_preview.png)
-
-## Architecture
-
-```
-Frontend (HTML/JS)
-    |  HTTPS / WSS
-Gateway (:8006, HTTPS)
-    |  HTTP / WS (internal)
-Worker Pool (:22400+)
-    +-- Worker 0 (GPU 0)
-    +-- Worker 1 (GPU 1)
-    +-- ...
-```
-
-- **Frontend** — Mode selection homepage, Turn-based Chat, Omni / Audio Duplex full-duplex interaction, Admin Dashboard
-- **Gateway** — Request routing and dispatching, WebSocket proxy, request queuing and session affinity
-- **Worker** — Each Worker occupies one GPU exclusively, supports Turn-based Chat / Duplex protocols, Duplex supports pause/resume (auto-release on timeout)
-
-
-## Quick Start
-
-### Check System Requirements
-1. Make sure you have an NVIDIA GPU with more than 28GB of VRAM.
-2. Make sure your machine is running a Linux operating system.
-
-### Deployment Steps
-The fastest deployment path is Docker Compose. For bare-metal deployment, use the Dockerfiles and entrypoints as the reference for dependencies and for the three startup stages: Gateway, Python Worker, and Backend.
-
-**Deployment Architecture**
-
-The current deployment is split into three runtime roles:
+`omni.sh` starts the three components from local checkouts, without Docker:
 
 ```text
-Browser -> Gateway -> Python Worker -> Backend
+llama-omni-server :22501  ->  worker :22401  ->  gateway :8016 (internal :8017)
+   (the model)                (protocol)         (HTTP, WebSocket, the pages)
 ```
 
-- **Gateway** is the public HTTPS/WebSocket entrypoint. It does not load the model; it handles routing, queueing, session recording, and worker health checks.
-- **Python Worker** exposes the worker WebSocket/health API, owns worker state, and forwards runtime protocol messages to a backend server.
-- **Backend** runs the model. The backend can be the PyTorch implementation (`py_backend/server.py`) or the C++ implementation (`llama-omni-server` from `llama.cpp-omni`).
-
-**Docker Deployment (Recommended)**
-
-Docker Compose is the maintained quick-start deployment path. Use the Compose files for deployment, and refer to `docker-compose*.yml`, `docker/Dockerfile.*`, and `docker/entrypoint-*.sh` for the exact startup flow, ports, mounts, health checks, and backend arguments.
-
-**Prerequisites:**
-- Docker with the Compose v2 plugin
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
-- One NVIDIA GPU per worker-backend instance
-- Model weights mounted from the host; weights are not baked into images
-
-**PyTorch backend via Compose:**
-
-```bash
-mkdir -p certs data
-openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
-  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
-
-MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose up -d --build
-docker compose logs -f gateway
-docker compose logs -f worker-backend-0
+```sh
+./omni.sh start      # backend, then worker, then gateway; waits for each to be healthy
+./omni.sh status     # components, and whether sessions are being recorded
+./omni.sh logs gateway
+./omni.sh stop
 ```
 
-Edit `docker-compose.yml` to match your GPU count. Use `docker-compose.multi.yml` only if you intentionally want multiple worker instances per GPU.
+Paths, ports and options are environment variables listed at the top of `omni.sh`. The defaults
+expect `~/lustra/llama.cpp-omni` built (`build/bin/llama-omni-server`), the Q8_0 GGUF in
+`~/models/MiniCPM-o-4_5-gguf/`, the token2wav assets in `~/models/MiniCPM-o-4.5/assets/`, and a
+Python environment in `~/py` with `requirements.txt` installed.
 
-**C++ backend via Compose:**
+`omni.sh` is cpp-only: fit-capture needs two llama.cpp-omni features that the PyTorch backend
+lacks: same-session context resets (`session.reset`) and forced speech (`session.say`, documented
+in llama.cpp-omni `docs/omni-duplex-say.md`). The Docker Compose files from upstream are still here
+but are not maintained for this use.
 
-```bash
-mkdir -p certs data
-openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
-  -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
+**One session at a time.** There is one worker, so a second person who connects is queued
+(`session.queued`) until the first session ends.
 
-GGUF_MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5-gguf \
-GATEWAY_HOST_PORT=8006 \
-CPP_GPU_ID=0 \
-docker compose -f docker-compose.cpp.yml up -d --build
+### Reaching it from other machines
 
-docker compose -f docker-compose.cpp.yml logs -f gateway
-docker compose -f docker-compose.cpp.yml logs -f cpp-worker-backend
+The gateway binds to 127.0.0.1 only. To serve it over HTTPS on the tailnet:
+
+```sh
+sudo tailscale serve --bg 8016
 ```
 
-For the C++ backend, `docker-compose.cpp.yml` is the intended entrypoint. It uses the C++ worker image defined by `docker/Dockerfile.cpp-worker-backend` and `docker/entrypoint-cpp-worker-backend.sh`. Read those files for the exact llama.cpp-omni ref, backend command, and default `LLAMA_SERVER_EXTRA_ARGS`.
+It is then at `https://aleatoric.tailfc2739.ts.net/` (this machine's tailnet name). Phones on the
+tailnet can open `/fit-capture/` there; browsers allow camera and microphone only over HTTPS.
 
-**Bare-metal deployment:**
+## Using it from Drape
 
-For bare-metal deployment, map the Docker dependencies and entrypoint commands to your host environment. Keep the same three-stage startup flow: Gateway, Python Worker, and Backend.
+Drape's tester app (`apps/tester-web`) has a guided turn video on `/videos/turn`. With the voice
+guide on, the browser opens a WebSocket to Drape's own api, which signs the tester in, checks her
+consent, and relays the session to this gateway. Browsers never connect here directly (Drape ADR
+0001), and nothing identifying is forwarded: no cookies, client ids, user agent or Drape ids.
 
-**Stop Docker services:**
+On the Drape side (see Drape's `docs/development.md`):
 
-```bash
-docker compose down                      # PyTorch backend compose
-docker compose -f docker-compose.cpp.yml down  # C++ backend compose
+| Drape setting | Meaning |
+|---|---|
+| `CAPTURE_AGENT=minicpm` | The default. The voice guide is offered, with the on-device pose tracker driving the steps. |
+| `CAPTURE_AGENT=off` | No voice guide: the pose tracker drives the steps and on-screen text replaces speech. Use it for A/B comparisons or when this machine is off. |
+| `CAPTURE_AGENT_URL` | This gateway's base URL, e.g. `https://aleatoric.tailfc2739.ts.net`. The api calls `GET /health` and then opens `wss://…/v1/realtime?mode=video`. |
+
+What Drape relies on here:
+
+1. **`GET /health` reports `"recording": false`.** Drape's relay checks this before every session
+   and refuses to connect otherwise, so a tester's voice and camera frames are never left in
+   `data/sessions/`. `omni.sh` starts the gateway with recording off; only `OMNI_RECORDING=1`
+   turns it on. A gateway started before this setting existed reports no `recording` field, and
+   Drape treats that as recording.
+2. **The realtime protocol on `/v1/realtime?mode=video`**, as used by
+   `static/duplex/lib/realtime-session.js`:
+   - client sends `session.init` (`system_prompt`, `ref_audio_base64`, `use_tts`, `max_slice_nums`,
+     `config`), `input.append` (one second of 16 kHz audio plus optional `video_frames`),
+     `session.reset` (`system_prompt`), `session.say` (`text`, `mute_after`) and `session.close`;
+   - server sends `session.queued` / `session.queue_update` / `session.queue_done`,
+     `session.created`, `response.output_audio.delta`, `response.listen`, `response.metrics`
+     (`kv_cache_length`), `session.reset.done`, `session.say.done`, `session.closed` and `error`.
+3. **The reference voice** at `GET /api/presets/omni/english_call/audio`, fetched by the relay.
+4. **An 8k context.** Each second costs about 64 vision tokens plus audio, so the page resets the
+   context at every step change and when the KV cache nears full (`CPP_CTX=8192`).
+
+The prompts, fixed lines and the pose tracker live in Drape as a port of `static/fit-capture/`.
+Changes to the flow should be made in both places, or the standalone page left as the reference.
+
+### Checking it
+
+```sh
+curl -s http://127.0.0.1:8016/health                         # {"status":"healthy",...,"recording":false}
+curl -s https://aleatoric.tailfc2739.ts.net/health           # the same, over the tailnet
+./omni.sh status                                             # recording: false
 ```
 
-<br/>
-<br/>
+If `recording` is `true` or missing, restart with `./omni.sh restart` (and without
+`OMNI_RECORDING=1`).
 
+## The fit-capture page
 
-## C++ Backend (llama.cpp)
+`static/fit-capture/` (served at `/fit-capture/`):
 
-This demo also supports a **C++ inference backend** based on llama.cpp-omni. Use the Docker deployment section above as the authoritative setup path; inspect `docker-compose.cpp.yml` and `docker/Dockerfile.cpp-worker-backend` for startup details.
+- `pose-tracker.js`: MediaPipe pose landmarks (vendored tasks-vision 0.10.14 and
+  `pose_landmarker_full.task`), whole-body framing, the arm position check (arms straight, 18–55°
+  from the body), turn tracking from the shoulder and hip lines (complete at 340°), sway and
+  droop, and an upright canvas that copes with phones held at any of four rotations.
+- `fit-capture.js`: the flow (positioning, arms, countdown, recording, done or failed), the
+  realtime session, context resets, forced lines, frame gating (frames are sent only when the pose
+  changes, at most every 4 s otherwise), mic-level voice detection, and the recording itself
+  (MediaRecorder on the upright canvas, up to 40 s).
+- `prompts.js`: the system prompt rebuilt at each reset, the fixed opening, step and closing lines,
+  and the tracker findings phrased for the model.
 
-Without Docker, `./omni.sh start` runs llama-omni-server, the worker and the gateway (on :8016) from local checkouts; see the script header. `omni.sh` is cpp-only: the fit-capture page (`/static/fit-capture/`) needs llama.cpp-omni's same-session `session.reset` and forced speech (`session.say`, documented in llama.cpp-omni `docs/omni-duplex-say.md`).
+Two drivers can move the flow on. With **tracker** (the default, and the only one Drape uses) the
+page decides when each step is done and announces it with a fixed line; the model only helps
+within a step. With **agent** the model moves the flow on itself by starting a reply with an emoji
+marker (🎬 start, ✅ done, 🔄 restart, 🛑 stop). Settings on the page cover the rest.
 
-### Desktop App (Windows & macOS)
+## Privacy: what is kept on disk
 
-Ready-to-use desktop installers are available for Windows and macOS. Download from [llama.cpp-omni Releases](https://github.com/tc-mb/llama.cpp-omni/releases/).
+| What | Where | Default |
+|---|---|---|
+| Session recordings: input audio and frames, model output, timeline | `data/sessions/<session_id>/` (gateway) | **Off** under `omni.sh` (`OMNI_RECORDING=0`). On under Docker Compose and when run by hand, unless `OMNI_RECORDING=0` or `recording.enabled: false` in `config.json`. |
+| Per-step input media (wav, jpg) | `/tmp/omni_ws/<session_id>/` (backend) | Deleted once read; the directory is removed when the session ends. Kept only with `OMNI_DEBUG_DUMP=1`. |
+| Debug dumps (hidden states, logits, TTS tokens and wavs) | under `/tmp/omni_ws/` or the directory named | Off. Only with `OMNI_DEBUG_DUMP=1`, `TTS_SAVE_HIDDEN_STATES_DIR`, `TTS_LOGITS_DEBUG_DIR` or `TTS_OUTPUT_DIR`. |
+| Speaker prompt for the reference voice | `~/.cache/llama-omni/voices/` | Cached by content hash. Built from the preset voice, not from the person's audio. |
+| Component logs | `$OMNI_STATE_DIR/cpp/*.log` (default `/tmp/minicpm-omni`) | Session start and end, timings, errors. Prompts and speech text are not logged unless `OMNI_LOG_VERBOSE=1`. |
+| Front-end diagnostics | `.run-logs/mobile-record-trace.jsonl` | Written only by pages that post to it; fit-capture and Drape do not. |
 
----
-
-## Project Structure
-
-**Project Code Structure**
-```
-minicpmo45_service/
-├── config.json               # Service config (copied from config.example.json, gitignored)
-├── config.example.json       # Config example (full fields + defaults)
-├── config.py                 # Config loading logic (Pydantic definition + JSON loading)
-├── requirements.txt          # Python dependencies
-├── docker-compose.yml        # Recommended PyTorch backend deployment
-├── docker-compose.cpp.yml    # Recommended C++ backend deployment
-├── docker-compose.multi.yml  # Multi-worker-per-GPU deployment variant
-├── docker/                   # Dockerfiles and container entrypoints
-│
-├── gateway.py                # Gateway (routing, queuing, WS proxy)
-├── worker.py                 # Worker (runtime protocol proxy)
-├── gateway_modules/          # Gateway business modules
-├── py_backend/               # PyTorch backend server
-├── runtime/                  # Backend protocol client/session layer
-│
-├── core/                     # Core encapsulation
-│   ├── schemas/              # Pydantic schemas (request/response)
-│   └── processors/           # Inference processors (UnifiedProcessor)
-│
-├── MiniCPMO45/               # Model core inference code
-├── static/                   # Frontend pages
-├── resources/                # Resource files (reference audio, etc.)
-└── tmp/                      # Runtime logs and PID files
-```
+The recordings already in `data/sessions/` are kept; turning recording off only stops new ones.
 
 ## Configuration
 
-`config.json` provides defaults for processes started directly on the host, or for containers when a file is mounted explicitly. Docker deployment does not copy the host `config.json` into images by default; Compose files, entrypoints, environment variables, and CLI arguments define the deployment behavior.
+`config.json` sits next to `config.py`. It is gitignored and optional; create it with
+`cp config.example.json config.json` and write only the fields you want to change. Missing fields
+take their defaults, and CLI arguments (which `omni.sh` passes for ports) take precedence.
+Environment variables are applied last:
 
-If you need bare-metal debugging, start from `config.example.json` and `config.py`. CLI arguments still take precedence over `config.json`, and missing fields fall back to Pydantic defaults.
+| Variable | Effect |
+|---|---|
+| `OMNI_RECORDING=0` / `1` | Overrides `recording.enabled`. `omni.sh` sets `0` unless told otherwise. |
 
-### `config.json` reference
+### `config.json` fields
 
 `config.json` sits next to `config.py` in the repo root. It is gitignored; create it with `cp config.example.json config.json`. Every field is optional, so write only the ones you want to change. If the file is missing, every field takes its default. Unknown keys are ignored. The schema, with descriptions, is in `config.py`.
 
@@ -222,7 +172,7 @@ If you need bare-metal debugging, start from `config.example.json` and `config.p
 | `service.eta_ema_alpha` | `0.3` | EMA smoothing factor for the measured ETA. |
 | `service.eta_ema_min_samples` | `3` | Number of samples needed before the EMA replaces the starting estimate. |
 | `duplex.pause_timeout` | `60.0` | How many seconds a paused duplex session holds its worker before releasing it. |
-| `recording.enabled` | `true` | The gateway records every session (model input and output plus raw media) to `<data_dir>/sessions/<session_id>/`. |
+| `recording.enabled` | `true` | The gateway records every session (model input and output plus raw media) to `<data_dir>/sessions/<session_id>/`. `OMNI_RECORDING` overrides it, and `omni.sh` sets it off. |
 | `recording.session_retention_days` | `-1` | Deletes recordings older than this many days. `-1` keeps them forever. |
 | `recording.max_storage_gb` | `-1` | Total size cap for recordings. When it's exceeded, the oldest are deleted first. `-1` means no cap. |
 
@@ -241,12 +191,25 @@ The C++ backend (`llama-omni-server`) is controlled by environment variables rat
 | `OMNI_LOG_VERBOSE=1` | off | Turns on the per-step trace: encoder, prefill and decode `[prof]` lines, TTS chunks and T2W windows. When it is off, the log shows only session start and end, model init, KV slides, turn-end flush trims, first-audio latency, warnings and errors. |
 | `OMNI_DEBUG_DUMP=1` | off | Keeps the debug dumps under `/tmp/omni_ws/<session_id>/`. Each step's input wav and jpg stays there until the session ends. The dumps are `llm_debug/`, `tts_txt/`, and in `tts_wav/` the per-window `wav_N.wav`, token files and merged wavs. When it is off, nothing is dumped, each input file is deleted once the encoder has read it, and the session directory is removed when the session ends. |
 
+## Project structure
 
-## Resource Consumption
+```text
+├── omni.sh                   # start / stop / status / logs for the cpp stack
+├── config.py                 # config schema (Pydantic), config.json loading, env overrides
+├── config.example.json
+├── gateway.py                # routing, queueing, WebSocket proxy, recording, the pages
+├── gateway_modules/          # gateway modules (session recording, ref audio registry, ...)
+├── worker.py                 # worker: runtime protocol proxy to the backend
+├── runtime/                  # backend protocol client and session layer
+├── static/
+│   ├── fit-capture/          # the fit-capture page (see above)
+│   ├── duplex/lib/           # realtime-session.js and the duplex audio pipeline
+│   └── ...                   # upstream demo pages: chat, omni and audio duplex, admin
+├── py_backend/, core/, MiniCPMO45/   # PyTorch backend (upstream; not used by omni.sh)
+├── docker*/                  # upstream Docker deployment (not maintained here)
+├── resources/, assets/       # reference audio, presets
+└── data/sessions/            # session recordings, when recording is on
+```
 
-| Resource | Token2Wav (default) | + torch.compile |
-|----------|---------------------|-----------------|
-| VRAM (per Worker, after initialization) | ~21.5 GB | ~21.5 GB |
-| Model loading time | ~16s | ~16s + ~5 min (warm) / ~15 min (cold) |
-| Mode switching latency | < 0.1ms | < 0.1ms |
-| Omni Full-Duplex per-unit latency (A100) | ~0.9s | **~0.5s** |
+The other upstream pages (turn-based chat, omni and audio full-duplex, the admin dashboard) still
+work against this stack; see the upstream documentation for them.

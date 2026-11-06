@@ -242,10 +242,16 @@ async def hide_admin_routes(request: Request, call_next):
 
 @app.get("/health")
 async def health():
-    """健康检查"""
+    """健康检查
+
+    "recording" says whether sessions are written to data/sessions; clients that must not
+    leave media on disk (Drape) refuse to connect unless it is false.
+    """
+    from config import get_config
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
+        "recording": get_config().recording.enabled,
     }
 
 

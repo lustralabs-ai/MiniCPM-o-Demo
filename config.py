@@ -292,6 +292,19 @@ class ServiceConfig(BaseModel):
 # ============ 加载逻辑 ============
 
 
+def _apply_env_overrides(config: ServiceConfig) -> ServiceConfig:
+    """Environment overrides, applied after config.json.
+
+    OMNI_RECORDING=0|1 turns session recording off or on. omni.sh sets it (off by default) so
+    that clients such as Drape, which must not leave a user's voice or camera frames on disk,
+    can check /health for "recording": false before connecting.
+    """
+    flag = os.environ.get("OMNI_RECORDING")
+    if flag is not None and flag.strip() != "":
+        config.recording.enabled = flag.strip().lower() not in ("0", "false", "no", "off")
+    return config
+
+
 def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
     """从 config.json 加载服务配置
 
@@ -317,12 +330,12 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
             "加载模型的进程请通过 --model-path 或 config.json 提供 model.model_path。",
             path,
         )
-        return ServiceConfig()
+        return _apply_env_overrides(ServiceConfig())
 
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    config = ServiceConfig(**data)
+    config = _apply_env_overrides(ServiceConfig(**data))
     logger.info(
         f"配置已加载: model={config.model.model_path or '(未设置)'}, "
         f"attn_implementation={config.attn_implementation}, "
